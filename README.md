@@ -4,19 +4,25 @@ Implementacion en ESP32 para control de cultivo indoor.
 ## Intro
 Firmware de ESP32 desarrollado con Gemini IA modelo 2.5 Pro (preview).
 
-## Prompt
-Vamos a hacer un prototipo IoT con una placa ESP32 NodeMCU, lo llamaremos Armina Grow. Yo me encargaré de administrar el hardware y vos de programar el software.
+Hardware utilizado:
+	- [Display LCD1602](https://protosupplies.com/product/lcd1602-16x2-i2c-blue-lcd-display/)
+	- [Relay de 4 modulos](https://protosupplies.com/product/relay-module-5v-x-4-relay-w-opto-isolation/)
+	- [Sensor DHT11](https://protosupplies.com/product/dht11-humidity-and-temp-sensor-module/) de humedad y temperatura
+	- [Encoder rotativo](https://protosupplies.com/product/rotary-encoder-module/)
 
-Caracteristicas del dispositivo:
+## Prompt
+Vamos a hacer un prototipo IoT con una placa ESP32 NodeMCU, lo llamaremos Armina Grow. Yo me encargaré de configurar el hardware y vos de programar el software.
+
+### Funcionamiento del dispositivo:
 
 1. El sistema contará con un portal captivo para configurar la conexion a wifi, mostrará las redes disponibles y permitirá administrar las redes guardadas. El portal de configuracion será accesible desde un nombre o una ip que pueda predeterminarse
 
 2. El prototipo contará con un sistema de archivos LittleFS para guardar configuraciones
 
-3. Modulos conectados:
+3. Incluye los modulos:
 	- Display LCD1602 16×2 I2C conectado a pines SDA=gpio21, SLC=gpio22
-	- Control de relay de 4 modulos conectado a pines relay1=gpio18, relay2=gpio19, relay3=gpio23, relay4=gpio25
-	- Control de humedad y temperatura DHT11 conectado a pin gpio=26
+	- Relay de 4 modulos conectado a pines relay1=gpio18, relay2=gpio19, relay3=gpio23, relay4=gpio25
+	- Sensor DHT11 de humedad y temperatura conectado a pin gpio=26
 	- Encoder rotativo conectado a pines CLK=gpio13, DT=gpio14, SW=gpio27
 
 4. El dispositivo debe tener fecha y hora actualizada
@@ -80,8 +86,10 @@ Caracteristicas del dispositivo:
 
 * Webserver
 
+### Comportamiento esperado
 * La ejecucion de funciones y cambios de estados de ejecucion tendrán salida serial para monitorear el comportamiento y debuguear errores.
+* El codigo estará comentado para mejorar la interpretacion.
+* Antes de darme una respuesta preguntame todo lo que necesites, el codigo de resultado debe ser ....
 
-El codigo estará comentado para mejorar la interpretacion.
-
-Antes de darme una respuesta preguntame todo lo que necesites, el codigo de resultado debe ser ....
+## Disclaimer
+Este codigo es experimental y de uso personal. Libre para copiar y modificar.
