@@ -5,10 +5,10 @@ Implementacion en ESP32 para control de cultivo indoor.
 Firmware de ESP32 desarrollado con Gemini IA modelo 2.5 Pro (preview).
 
 Hardware utilizado:
-	- [Display LCD1602](https://protosupplies.com/product/lcd1602-16x2-i2c-blue-lcd-display/)
-	- [Relay de 4 modulos](https://protosupplies.com/product/relay-module-5v-x-4-relay-w-opto-isolation/)
-	- [Sensor DHT11](https://protosupplies.com/product/dht11-humidity-and-temp-sensor-module/) de humedad y temperatura
-	- [Encoder rotativo](https://protosupplies.com/product/rotary-encoder-module/)
+- [Display LCD1602](https://protosupplies.com/product/lcd1602-16x2-i2c-blue-lcd-display/)
+- [Relay de 4 modulos](https://protosupplies.com/product/relay-module-5v-x-4-relay-w-opto-isolation/)
+- [Sensor DHT11](https://protosupplies.com/product/dht11-humidity-and-temp-sensor-module/) de humedad y temperatura
+- [Encoder rotativo](https://protosupplies.com/product/rotary-encoder-module/)
 
 ## Prompt
 Vamos a hacer un prototipo IoT con una placa ESP32 NodeMCU, lo llamaremos Armina Grow. Yo me encargaré de configurar el hardware y vos de programar el software.
