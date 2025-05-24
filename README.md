@@ -2,14 +2,14 @@
 Implementacion en ESP32 para control de cultivo indoor.
 
 ## Intro
-Firmware de ESP32 desarrollado con Gemini IA
+Firmware de ESP32 desarrollado con Gemini IA modelo 2.5 Pro (preview).
 
-### Prompt
-Vamos a hacer un prototipo IoT con una placa ESP32 NodeMCU, lo llamaremos Armina. Yo me encargo de administrar el hardware y vos vas a programar el software.
+## Prompt
+Vamos a hacer un prototipo IoT con una placa ESP32 NodeMCU, lo llamaremos Armina Grow. Yo me encargaré de administrar el hardware y vos de programar el software.
 
-El dispositivo tiene las siguientes caracteristicas:
+Caracteristicas del dispositivo:
 
-1. Configuracion wifi: el sistema contará con un portal captivo para configurar la conexion a wifi, mostrará las redes disponibles y permitirá administrar las redes guardadas. El portal de configuracion será accesible desde un nombre o una ip que pueda predeterminarse
+1. El sistema contará con un portal captivo para configurar la conexion a wifi, mostrará las redes disponibles y permitirá administrar las redes guardadas. El portal de configuracion será accesible desde un nombre o una ip que pueda predeterminarse
 
 2. El prototipo contará con un sistema de archivos LittleFS para guardar configuraciones
 
