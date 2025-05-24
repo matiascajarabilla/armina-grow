@@ -31,43 +31,43 @@ Caracteristicas del dispositivo:
 
 9. El menu tendrá los siguientes items:
 	- Temp. y humedad (asignado a DHT11)
-		-- Frecuencia: (cada cuántos minutos se toma muestra; valores admitidos enteros de 1 a 60)
-		-- Modo test: (valores admitidos 'Si'/'No'; si es 'Si' el sensor tomará muestras cada 5 segundos; si es 'No' tomará muestras de acuerdo al valor de frecuencia guardado)
+		- Frecuencia: (cada cuántos minutos se toma muestra; valores admitidos enteros de 1 a 60)
+		- Modo test: (valores admitidos 'Si'/'No'; si es 'Si' el sensor tomará muestras cada 5 segundos; si es 'No' tomará muestras de acuerdo al valor de frecuencia guardado)
 	- Luces (asignado a Relay 1)
-		-- Hora ON: (hora; valores admitidos enteros de 0 a 23)
-		-- Hora OFF: (hora; valores admitidos enteros de 0 a 23)
-		-- Atrás
+		- Hora ON: (hora; valores admitidos enteros de 0 a 23)
+		- Hora OFF: (hora; valores admitidos enteros de 0 a 23)
+		- Atrás
 	- Ventilacion (asignado a Relay 2)
-		-- Hora ON: (hora; valores admitidos enteros de 0 a 23)
-		-- Hora OFF: (hora; valores admitidos enteros de 0 a 23)
-		-- Atrás
+		- Hora ON: (hora; valores admitidos enteros de 0 a 23)
+		- Hora OFF: (hora; valores admitidos enteros de 0 a 23)
+		- Atrás
 	- Extraccion (asignado a Relay 3)
-		-- Frecuencia: (cada cuántas horas; valores admitidos enteros de 0 a 24; el 0 indica que el relay debe quedar apagado)
-		-- Duracion: (minutos; valores admitidos enteros de 1 a 60)
-		-- Modo test: (valores admitidos 'Si'/'No'; si es 'Si' el relay se encenderá durante 1 segundo cada 5 segundos; si es 'No' se encenderá de acuerdo al valor de frecuencia guardado)
-		-- Atrás
+		- Frecuencia: (cada cuántas horas; valores admitidos enteros de 0 a 24; el 0 indica que el relay debe quedar apagado)
+		- Duracion: (minutos; valores admitidos enteros de 1 a 60)
+		- Modo test: (valores admitidos 'Si'/'No'; si es 'Si' el relay se encenderá durante 1 segundo cada 5 segundos; si es 'No' se encenderá de acuerdo al valor de frecuencia guardado)
+		- Atrás
 	- Riego (asignado a Relay 4)
-		-- Frecuencia: (cada cuántos días; valores admitidos enteros de 0 a 30; el 0 indica que el relay debe quedar apagado)
-		-- Duracion: (minutos; valores admitidos enteros de 1 a 30)
-		-- Hora disparo: (hora; valores admitidos enteros de 0 a 23)
-		-- Modo test: (valores admitidos 'Si'/'No'; si es 'Si' el relay se encenderá durante 1 segundo cada 5 segundos; si es 'No' se encenderá de acuerdo al valor de frecuencia guardado)
-		-- Atrás
+		- Frecuencia: (cada cuántos días; valores admitidos enteros de 0 a 30; el 0 indica que el relay debe quedar apagado)
+		- Duracion: (minutos; valores admitidos enteros de 1 a 30)
+		- Hora disparo: (hora; valores admitidos enteros de 0 a 23)
+		- Modo test: (valores admitidos 'Si'/'No'; si es 'Si' el relay se encenderá durante 1 segundo cada 5 segundos; si es 'No' se encenderá de acuerdo al valor de frecuencia guardado)
+		- Atrás
 	- Sistema
-		-- Nombre red WiFi
-		-- Direccion IP (IP del Webserver si está en modo Online; IP de la pagina de configuracion wifi si esta en modo Access Point)
-		-- Olvidar Red WiFi (borra las credenciales wifi y resetea el dispositivo)
-			--- Confirmar
-			--- Atrás
-		-- Reiniciar
-			--- Confirmar
-			--- Atrás
-		-- Version de firmware
-		-- Atrás
-		-- Registro
-			--- Frecuencia: (cada cuántas horas, valores admitidos de 0 a 24; el 0 indica que no se guardan registros)
-			--- Borrar registro (borrar contenido del registro)
-				---- Confirmar
-				---- Atrás
+		- Nombre red WiFi
+		- Direccion IP (IP del Webserver si está en modo Online; IP de la pagina de configuracion wifi si esta en modo Access Point)
+		- Olvidar Red WiFi (borra las credenciales wifi y resetea el dispositivo)
+			- Confirmar
+			- Atrás
+		- Reiniciar
+			- Confirmar
+			- Atrás
+		- Version de firmware
+		- Atrás
+		- Registro
+			- Frecuencia: (cada cuántas horas, valores admitidos de 0 a 24; el 0 indica que no se guardan registros)
+			- Borrar registro (borrar contenido del registro)
+				- Confirmar
+				- Atrás
 	- Volver a inicio
 
 10. Navegacion del menú: con clic se accede a cada item. Dentro del item con clic se accede a modificar el subitem, girando el encoder se ajusta el valor dentro de los admitidos y con clic se confirma el valor. Si no hay actividad con el encoder por 10 segundos la pantalla vuelve a la pantalla de inicio 
