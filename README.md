@@ -12,10 +12,12 @@ Info:
 - [ESP32 Pinout electronicshub](https://www.electronicshub.org/esp32-pinout/)
 
 
+## Disclaimer
+Este codigo es experimental y de estudio. Libre para copiar y usar.
 
 ## Prompt
 
-Vas a programar un prototipo IoT con una placa ESP32 NodeMCU en Arduino IDE. El dispositivo se denomina Armina Grow y sirve para automatizar el cultivo indoor. Tiene un sensor de temperatura y humedad, permite controlar luces, ventilación, extracción y riego. La interface de usuario consta de un display LCD y un encoder rotativo que permite programar la operación del dispositivo. Cuenta con registro de datos y un servidor web para monitoreo. Me vas a dar el codigo que responda a las caracteristicas y funciones que siguen:
+Vas a programar un prototipo IoT con una placa ESP32 NodeMCU en Arduino IDE. El dispositivo se denomina Armina Grow y sirve para automatizar el cultivo indoor. Tiene un sensor de temperatura y humedad, permite controlar luces, ventilación, extracción y riego. La interface de usuario consta de un display LCD y un encoder rotativo que permite programar la operación del dispositivo. Cuenta con registro de datos y un servidor web para monitoreo. Me vas a dar el codigo que responda a las caracteristicas y funciones que siguen. Vas a esperar a que te diga Adelante para responder con el codigo.
 
 
 ### Modulos conectados:
@@ -38,19 +40,19 @@ Vas a programar un prototipo IoT con una placa ESP32 NodeMCU en Arduino IDE. El 
 
 ### Conexión
 
-* Tiene un portal captivo de configurar de la conexion a wifi. Muestra las redes disponibles y permite administrar las redes guardadas. El portal de configuracion es accesible desde un nombre o una ip predeterminada.
+* Un portal captivo permite configurar la conexion a wifi. Muestra las redes disponibles y permite administrar las redes guardadas. El portal de configuracion es accesible desde un nombre o una ip predeterminada.
 
-* Modos de operacion:
-	- Modo Normal:
-		- El dispositivo está conectado a una red WiFi.
-		- Primera linea del LCD muestra la temperatura (simbolo T) y la humedad (simbolo H).
-		- Segunda linea del LCD muestra 'Online' y la hora actual sin segundos.
-		- El LED integrado de la placa parpadea 2 veces seguidas cada 3 segundos.
-	- Modo Config:
-		- El dispositivo no ha sido conectado a ninguna red previamente, el ESP32 entra en modo AP.
-		- Primera linea del LCD muestra 'Conectar a '.
-		- Segunda linea del LCD muestra el nombre del access point para configurar la conexión.
-		- El LED integrado de la placa parpadea un segundo prendido y un segundo apagado.
+* Modo de operación Normal:
+	- El dispositivo está conectado a una red WiFi.
+	- Primera linea del LCD muestra la temperatura (simbolo T) y la humedad (simbolo H).
+	- Segunda linea del LCD muestra 'Online' y la hora actual sin segundos.
+	- El LED integrado de la placa parpadea 2 veces seguidas cada 3 segundos.
+
+* Modo de operación Config:
+	- El dispositivo no ha sido conectado a ninguna red previamente, el ESP32 entra en modo AP.
+	- Primera linea del LCD muestra 'Conectar a '.
+	- Segunda linea del LCD muestra el nombre del access point para configurar la conexión.
+	- El LED integrado de la placa parpadea un segundo prendido y un segundo apagado.
 
 
 ### Navegación
@@ -63,7 +65,7 @@ Vas a programar un prototipo IoT con una placa ESP32 NodeMCU en Arduino IDE. El 
 * Si no hay actividad con el encoder por 10 segundos se vuelve a la pantalla de inicio
 
 
-### Menú
+### Estructura del menú
 
 1. Temp. y humedad (asignado a DHT11)
 	- Frecuencia: (
@@ -177,15 +179,13 @@ Vas a programar un prototipo IoT con una placa ESP32 NodeMCU en Arduino IDE. El 
 
 ### Gestion de la información
 
-* El dispositivo cuenta con el sistema de archivos LittleFS.
+* El dispositivo cuenta con un sistema de archivos LittleFS.
 
 * Las preferencias de operacion configuradas en el menú se almacenan en el archivo armina-grow-pref.
 
-* El dispositivo lleva el archivo de registro armina-grow-log.csv.
+* El registro datos de sensores y relays se almacena en armina-grow-log.csv.
 
-* El registro se actualiza con la frecuencia establecida en armina-grow-pref.
-
-* Formato de los datos de registro:
+* Datos de registro:
 	- Fecha y dia en formato YYYY-MM-DD-HH-MM-SS
 	- Temperatura
 	- Humedad
@@ -194,13 +194,14 @@ Vas a programar un prototipo IoT con una placa ESP32 NodeMCU en Arduino IDE. El 
 	- Estado de relay Extracción: ON/OFF
 	- Estado de relay Riego: ON/OFF
 
+* El sistema cuenta con un webserver de monitoreo
 
-* Webserver ///////////////////////////////////
+* La pagina de monitoreo en el servidor igual a armina-grow-monitor_refencia.html (el archivo html se adjunta aparte). Deberás adaptarlo para que funciona en este contexto.
 
 
 ### Condiciones de ejecución
 
-* El dispositivo mantiene fecha y hora actualizada con Network Time Protocol
+* La fecha y hora se actualiza con Network Time Protocol
 
 * La operacion de relays y sensores está determinada por los parametros guardados en el archivo de preferencias.
 
@@ -208,15 +209,22 @@ Vas a programar un prototipo IoT con una placa ESP32 NodeMCU en Arduino IDE. El 
 	- la pantalla LCD mostrará durante 2 segundos
 	- linea 1 = nombre la funcion asignada al relay
 	- linea 2 = 'Encendido' o 'Apagado' según corresponda
-* Si el sensor DHT toma una muestra 
 
-* Si el archivo csv alcanza la cantidad máxima de registros establecida en el archivo de preferencias se borrará el registro más antiguo antes de grabar el siguiente.
+* El registro se actualiza con la frecuencia establecida en armina-grow-pref.
 
-* La ejecucion de funciones y cambios de estados de ejecucion tendrán una salida serial descriptiva para monitorear el comportamiento y debuguear errores.
+* Si la cantidad de registros supera la cantidad máxima de registros establecida en el archivo de preferencias se borra el registro más antiguo antes de grabar el siguiente.
 
-* El codigo estará comentado para mejorar la interpretacion.
+* Si se pierde la conexion a internet la segunda linea del LCD muestra 'Offline'
 
-* Antes de darme una respuesta preguntame todo lo que necesites, el codigo de resultado debe ser ....
+* La ejecucion de funciones y cambios de estados de ejecucion tendrán una salida serial descriptiva para monitorear el comportamiento desde consola.
 
-## Disclaimer
-Este codigo es experimental y de uso personal. Libre para copiar y modificar.
+
+## Post prompt
+
+* El codigo estará comentado para mejorar la interpretacion
+
+* Considerar las limitaciones de memoria del hardware
+
+* Me vas a preguntar lo que necesites saber
+
+* Me vas a proponer mejoras
