@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Armina Grow - Monitor de Cultivo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        /* Estilos base para el modo oscuro directamente */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1f2937; /* Fondo gris oscuro */
+            color: #D1D5DB; /* Texto gris claro por defecto */
+        }
+        .card {
+            background-color: #374151; /* Gris más oscuro para tarjetas */
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid #4b5563; /* Borde sutil para tarjetas */
+        }
+        .sensor-display-bg { /* Fondo para los displays de sensores */
+            background-color: #4B5563;
+        }
+        .control-button {
+            transition: background-color 0.3s ease, opacity 0.3s ease;
+            border-radius: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            font-weight: 500;
+            color: white;
+        }
+        .control-button.on {
+            background-color: #047857; /* Verde oscuro para ON */
+        }
+        .control-button.off {
+            background-color: #B91C1C; /* Rojo oscuro para OFF */
+        }
+        .control-button:hover {
+            opacity: 0.85;
+        }
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-dot.on {
+            background-color: #34D399;
+        }
+        .status-dot.off {
+            background-color: #F87171;
+        }
+        .icon {
+            font-size: 1.5rem;
+            margin-right: 0.75rem;
+            color: #9CA3AF;
+        }
+        .header-title {
+            color: #F3F4F6;
+        }
+        .section-title {
+            color: #D1D5DB;
+        }
+        .value-text {
+            color: #34D399;
+        }
+        .text-muted {
+            color: #9CA3AF;
+        }
+        #logDisplay {
+            background-color: #111827; /* Fondo aún más oscuro para el log */
+            color: #A5B4FC; /* Texto color lavanda claro para el log */
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.875rem; /* 14px */
+            line-height: 1.4;
+            white-space: pre-wrap; /* Para que las líneas largas se ajusten */
+            word-break: break-all; /* Para romper palabras largas si es necesario */
+            max-height: 300px; /* Altura máxima antes de scroll */
+            overflow-y: auto; /* Scroll vertical si el contenido excede la altura */
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+    <div class="max-w-4xl mx-auto">
+        <header class="mb-8 text-center pt-8">
+            <h1 class="text-4xl font-bold header-title">🌿 Armina Grow</h1>
+            <p class="text-lg text-muted">Panel de Control para Cultivo Indoor</p>
+        </header>
+
+        <section id="sensores" class="card">
+            <h2 class="text-2xl font-semibold mb-6 section-title">Lecturas Actuales</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="flex items-center p-4 sensor-display-bg rounded-lg">
+                    <i class="fas fa-thermometer-half icon text-blue-400"></i>
+                    <div>
+                        <p class="text-sm text-muted">Temperatura</p>
+                        <p id="temperatura" class="text-3xl font-bold value-text">--.-- °C</p>
+                    </div>
+                </div>
+                <div class="flex items-center p-4 sensor-display-bg rounded-lg">
+                    <i class="fas fa-tint icon text-green-400"></i>
+                    <div>
+                        <p class="text-sm text-muted">Humedad</p>
+                        <p id="humedad" class="text-3xl font-bold value-text">--.-- %</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="controles" class="card">
+            <h2 class="text-2xl font-semibold mb-6 section-title">Controles del Sistema</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-6">
+                <div id="control-luces" class="p-4 border border-gray-600 rounded-lg">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-lg font-medium">
+                            <i class="fas fa-lightbulb icon text-yellow-400"></i>Luces
+                        </h3>
+                        <span id="status-luces-dot" class="status-dot off"></span>
+                    </div>
+                    <p id="status-luces" class="text-sm text-muted mb-3">Estado: Apagado</p>
+                    <button onclick="toggleControl('luces')" class="w-full control-button off">
+                        Encender / Apagar
+                    </button>
+                </div>
+
+                <div id="control-ventilacion" class="p-4 border border-gray-600 rounded-lg">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-lg font-medium">
+                            <i class="fas fa-fan icon text-blue-400"></i>Ventilación
+                        </h3>
+                        <span id="status-ventilacion-dot" class="status-dot off"></span>
+                    </div>
+                    <p id="status-ventilacion" class="text-sm text-muted mb-3">Estado: Apagado</p>
+                    <button onclick="toggleControl('ventilacion')" class="w-full control-button off">
+                        Encender / Apagar
+                    </button>
+                </div>
+
+                <div id="control-extraccion" class="p-4 border border-gray-600 rounded-lg">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-lg font-medium">
+                            <i class="fas fa-wind icon text-teal-400"></i>Extracción
+                        </h3>
+                        <span id="status-extraccion-dot" class="status-dot off"></span>
+                    </div>
+                    <p id="status-extraccion" class="text-sm text-muted mb-3">Estado: Apagado</p>
+                    <button onclick="toggleControl('extraccion')" class="w-full control-button off">
+                        Encender / Apagar
+                    </button>
+                </div>
+
+                <div id="control-riego" class="p-4 border border-gray-600 rounded-lg">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-lg font-medium">
+                            <i class="fas fa-tint-slash icon text-blue-500"></i>Riego
+                        </h3>
+                        <span id="status-riego-dot" class="status-dot off"></span>
+                    </div>
+                    <p id="status-riego" class="text-sm text-muted mb-3">Estado: Apagado</p>
+                    <button onclick="toggleControl('riego', true)" class="w-full control-button off mb-2">
+                        Encender / Apagar
+                    </button>
+                    <button onclick="activarRiegoManual()" class="w-full control-button bg-blue-700 hover:bg-blue-800">
+                        Regar Ahora (Manual)
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <section id="registro" class="card">
+            <h2 class="text-2xl font-semibold mb-4 section-title">Registro de Eventos</h2>
+            <button id="descargarRegistro" class="w-full sm:w-auto control-button bg-gray-600 hover:bg-gray-700 mb-4 px-4 py-2 text-sm">
+                <i class="fas fa-download mr-2"></i>Descargar Registro Completo (.csv)
+            </button>
+            <h3 class="text-lg font-medium mb-2 text-muted">Últimas 15 entradas:</h3>
+            <pre id="logDisplay" class="p-3 rounded-md text-sm"></pre>
+        </section>
+
+        <footer class="mt-12 text-center text-sm text-muted">
+            <p>&copy; <span id="currentYear"></span> Armina Grow. Prototipo IoT.</p>
+        </footer>
+    </div>
+
+    <script>
+        // Estado inicial simulado de los controles
+        const controlStates = {
+            luces: false,
+            ventilacion: false,
+            extraccion: false,
+            riego: false
+        };
+
+        // Simulación de datos de registro (ejemplo)
+        // En una aplicación real, esto vendría del ESP32 o se generaría dinámicamente
+        let logCompletoSimulado = [
+            "2024-05-24 10:00:01,INFO,Sistema iniciado",
+            "2024-05-24 10:00:15,SENSOR,Temp: 22.5 C, Hum: 55.2 %",
+            "2024-05-24 10:05:00,CONTROL,Luces encendidas",
+            "2024-05-24 10:10:20,SENSOR,Temp: 22.8 C, Hum: 54.9 %",
+            "2024-05-24 10:15:00,CONTROL,Ventilacion encendida",
+            "2024-05-24 10:20:25,SENSOR,Temp: 23.1 C, Hum: 54.5 %",
+            "2024-05-24 10:25:00,RIEGO,Riego manual activado",
+            "2024-05-24 10:25:05,RIEGO,Riego manual finalizado",
+            "2024-05-24 10:30:30,SENSOR,Temp: 22.9 C, Hum: 55.8 %",
+            "2024-05-24 10:35:00,CONTROL,Extraccion encendida",
+            "2024-05-24 10:40:35,SENSOR,Temp: 23.2 C, Hum: 55.1 %",
+            "2024-05-24 10:45:00,CONTROL,Luces apagadas",
+            "2024-05-24 10:50:40,SENSOR,Temp: 22.7 C, Hum: 56.0 %",
+            "2024-05-24 10:55:00,CONTROL,Ventilacion apagada",
+            "2024-05-24 11:00:45,SENSOR,Temp: 22.5 C, Hum: 56.3 %",
+            "2024-05-24 11:05:00,CONTROL,Extraccion apagada",
+            "2024-05-24 11:10:50,SENSOR,Temp: 22.3 C, Hum: 56.8 %",
+            "2024-05-24 11:15:00,INFO,Modo automatico riego activado",
+            "2024-05-24 11:20:55,SENSOR,Temp: 22.4 C, Hum: 56.5 %",
+            "2024-05-24 11:25:00,RIEGO,Riego automatico iniciado por sensor de humedad bajo",
+            "2024-05-24 11:25:10,RIEGO,Riego automatico finalizado"
+        ];
+
+        function agregarEntradaLog(tipo, mensaje) {
+            const timestamp = new Date().toLocaleString('sv-SE').replace(' ', ','); // Formato YYYY-MM-DD,HH:MM:SS
+            const nuevaEntrada = `${timestamp},${tipo.toUpperCase()},${mensaje}`;
+            logCompletoSimulado.push(nuevaEntrada);
+            actualizarDisplayRegistro();
+        }
+
+
+        // Simulación de actualización de datos de sensores
+        function actualizarSensores() {
+            const tempSimulada = (Math.random() * 10 + 18).toFixed(2);
+            const humedadSimulada = (Math.random() * 30 + 40).toFixed(2);
+            document.getElementById('temperatura').textContent = `${tempSimulada} °C`;
+            document.getElementById('humedad').textContent = `${humedadSimulada} %`;
+            // Podríamos agregar una entrada de log aquí también si quisiéramos
+            // agregarEntradaLog("SENSOR", `Temp: ${tempSimulada} C, Hum: ${humedadSimulada} %`);
+        }
+
+        // Función para cambiar el estado de un control
+        function toggleControl(controlId, esRiegoAutomatico = false) {
+            controlStates[controlId] = !controlStates[controlId];
+            actualizarUIControles();
+            const estado = controlStates[controlId] ? 'encendido' : 'apagado';
+            let mensajeLog = `${controlId.charAt(0).toUpperCase() + controlId.slice(1)} ${estado}`;
+            if (esRiegoAutomatico) {
+                mensajeLog = `Modo automatico riego ${controlId} ${estado}`;
+            }
+            agregarEntradaLog("CONTROL", mensajeLog);
+            
+            // fetch(`/control?${controlId}=${controlStates[controlId] ? 'on' : 'off'}`)
+        }
+
+        function activarRiegoManual() {
+            agregarEntradaLog("RIEGO", "Riego manual activado");
+            const statusElement = document.getElementById('status-riego');
+            const originalStatusText = statusElement.textContent;
+            statusElement.textContent = 'Regando manualmente...';
+            
+            // fetch('/riego_manual')
+
+            setTimeout(() => {
+                agregarEntradaLog("RIEGO", "Riego manual finalizado");
+                statusElement.textContent = originalStatusText; 
+                actualizarUIControles(); 
+            }, 3000);
+        }
+
+        // Función para actualizar la interfaz de usuario de los controles
+        function actualizarUIControles() {
+            for (const controlId in controlStates) {
+                const statusElement = document.getElementById(`status-${controlId}`);
+                const statusDotElement = document.getElementById(`status-${controlId}-dot`);
+                const buttonElement = document.querySelector(`#control-${controlId} button:not([onclick*='activarRiegoManual'])`);
+
+                if (statusElement && statusDotElement && buttonElement) {
+                    const estadoActual = controlStates[controlId];
+                    statusElement.textContent = `Estado: ${estadoActual ? 'Encendido' : 'Apagado'}`;
+                    statusDotElement.classList.remove('on', 'off');
+                    statusDotElement.classList.add(estadoActual ? 'on' : 'off');
+                    buttonElement.classList.remove('on', 'off');
+                    buttonElement.classList.add(estadoActual ? 'on' : 'off');
+                }
+            }
+        }
+
+        // Función para actualizar el display del registro
+        function actualizarDisplayRegistro() {
+            const logDisplay = document.getElementById('logDisplay');
+            if (logDisplay) {
+                // Obtener las últimas 15 líneas (o menos si no hay tantas)
+                const ultimasLineas = logCompletoSimulado.slice(-15);
+                logDisplay.textContent = ultimasLineas.join('\n');
+                // Hacer scroll hacia abajo automáticamente para ver la última línea
+                logDisplay.scrollTop = logDisplay.scrollHeight;
+            }
+        }
+
+        // Función para descargar el registro simulado
+        function descargarRegistro() {
+            agregarEntradaLog("SISTEMA", "Descarga de registro solicitada");
+            const contenidoCSV = logCompletoSimulado.join('\n');
+            const blob = new Blob([contenidoCSV], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            if (link.download !== undefined) { // Comprobar si el atributo download es soportado
+                const url = URL.createObjectURL(blob);
+                link.setAttribute("href", url);
+                link.setAttribute("download", "armina_grow_registro.csv");
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url); // Liberar el objeto URL
+            } else {
+                // Fallback o mensaje si el atributo download no es soportado
+                alert("La descarga directa no es soportada por tu navegador. Intenta copiar el contenido.");
+            }
+        }
+        
+        // Inicialización
+        document.addEventListener('DOMContentLoaded', () => {
+            actualizarSensores(); 
+            setInterval(actualizarSensores, 30000); // Actualiza sensores cada 30 segundos para no llenar el log tan rápido
+            actualizarUIControles(); 
+            actualizarDisplayRegistro(); // Carga inicial del registro
+
+            document.getElementById('currentYear').textContent = new Date().getFullYear();
+            document.getElementById('descargarRegistro').addEventListener('click', descargarRegistro);
+
+            // Simular nuevas entradas de log periódicamente para demostración
+            setInterval(() => {
+                const eventosSimulados = [
+                    { tipo: "INFO", mensaje: "Chequeo periodico del sistema OK" },
+                    { tipo: "SENSOR", mensaje: `Temp: ${(Math.random() * 5 + 20).toFixed(1)} C, Hum: ${(Math.random() * 20 + 45).toFixed(1)} %` },
+                ];
+                const eventoAleatorio = eventosSimulados[Math.floor(Math.random() * eventosSimulados.length)];
+                agregarEntradaLog(eventoAleatorio.tipo, eventoAleatorio.mensaje);
+            }, 15000); // Nueva entrada de log simulada cada 15 segundos
+        });
+    </script>
+</body>
+</html>
