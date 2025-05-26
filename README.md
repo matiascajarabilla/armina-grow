@@ -39,22 +39,15 @@ Info:
 	- Se muestra detalle cuando relay cambia de estado pero no vuelve a pantalla inicial. Verificar
 
 
-### Modulos conectados:
+### Cableado de módulos:
 
-- Display LCD1602 16×2 I2C
-	SDA = gpio21,
-	SLC = gpio22
-- Relay de 4 modulos 
-	relay1 = gpio18,
-	relay2 = gpio19,
-	relay3 = gpio23,
-	relay4 = gpio25
-- Sensor DHT11
- 	data = gpio26
-- Encoder rotativo
-	CLK = gpio13,
-	DT = gpio14,
-	SW = gpio27
+- Display LCD1602 16×2 I2C: SDA = gpio21, SLC = gpio22
+
+- Relay de 4 modulos: relay1 = gpio18, relay2 = gpio19, relay3 = gpio23, relay4 = gpio25
+
+- Sensor DHT11: data = gpio26
+
+- Encoder rotativo: CLK = gpio13, DT = gpio14, SW = gpio27
 
 
 ### Conexión
