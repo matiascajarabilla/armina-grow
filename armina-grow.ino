@@ -1,205 +1,213 @@
 // Armina Grow - Prototipo IoT para Cultivo Indoor con ESP32
-// Versión 0.1.0
+// Versión 0.2.2 (Correcciones de compilación y comentarios mejorados)
 
 // =============================================================================
 // INCLUSIÓN DE LIBRERÍAS
 // =============================================================================
-#include <WiFi.h>
-#include <WebServer.h> // Para el servidor web HTTP
-#include <DNSServer.h> // Para el portal cautivo (usado por WiFiManager)
-#include <WiFiManager.h> // Para la gestión de conexión WiFi y portal cautivo
+#include <WiFi.h>              // Para la conectividad WiFi
+#include <WebServer.h>         // Para crear el servidor web HTTP
+#include <DNSServer.h>         // Para el portal cautivo (usado por WiFiManager)
+#include <WiFiManager.h>       // Para la gestión de conexión WiFi y portal cautivo
 #include <LiquidCrystal_I2C.h> // Para el display LCD I2C
-#include <DHT.h> // Para el sensor DHT11/22
-#include <Preferences.h> // Para guardar configuraciones en memoria no volátil
-#include <LittleFS.h> // Para el sistema de archivos (logs, página web)
-#include <NTPClient.h> // Para obtener la hora de internet
-#include <WiFiUdp.h> // Requerido por NTPClient
-// Para el Encoder Rotativo, usaremos una implementación simple sin librería externa por ahora
-// o puedes integrar una como ESP32Encoder.h o RotaryEncoder.h
+#include <DHT.h>               // Para el sensor de Temperatura y Humedad DHT11/22
+#include <Preferences.h>       // Para guardar configuraciones en memoria no volátil (NVS)
+#include <LittleFS.h>          // Para el sistema de archivos (logs, página web)
+#include <NTPClient.h>         // Para obtener la hora de internet (Network Time Protocol)
+#include <WiFiUdp.h>           // Requerido por NTPClient para la comunicación UDP
 
 // =============================================================================
 // DEFINICIONES Y CONSTANTES GLOBALES
 // =============================================================================
-#define FIRMWARE_VERSION "0.1.0"
+#define FIRMWARE_VERSION "0.2.2" // Versión actual del firmware
 
 // --- Pines del Hardware ---
 // Display LCD I2C
-const int LCD_SDA_PIN = 21; // Ya definido por la librería, pero bueno tenerlo
-const int LCD_SCL_PIN = 22; // Ya definido por la librería, pero bueno tenerlo
-const int LCD_ADDRESS = 0x27; // Dirección I2C común para LCDs 1602. Verifica la tuya.
-const int LCD_COLS = 16;
-const int LCD_ROWS = 2;
+const int LCD_SDA_PIN = 21; // Pin SDA para I2C
+const int LCD_SCL_PIN = 22; // Pin SCL para I2C
+const int LCD_ADDRESS = 0x27; // Dirección I2C del módulo LCD
+const int LCD_COLS = 16;    // Columnas del LCD
+const int LCD_ROWS = 2;     // Filas del LCD
 
 // Módulo de 4 Relés
-const int RELAY1_PIN = 18; // Luces
-const int RELAY2_PIN = 19; // Ventilación
-const int RELAY3_PIN = 23; // Extracción
-const int RELAY4_PIN = 25; // Riego
-const int NUM_RELAYS = 4;
+const int RELAY1_PIN = 18; // Pin para el Relé 1 (Luces)
+const int RELAY2_PIN = 19; // Pin para el Relé 2 (Ventilación)
+const int RELAY3_PIN = 23; // Pin para el Relé 3 (Extracción)
+const int RELAY4_PIN = 25; // Pin para el Relé 4 (Riego)
+const int NUM_RELAYS = 4;  // Número total de relés
 const int relayPins[NUM_RELAYS] = {RELAY1_PIN, RELAY2_PIN, RELAY3_PIN, RELAY4_PIN};
 const char* relayNames[NUM_RELAYS] = {"Luces", "Ventilacion", "Extraccion", "Riego"};
-bool relayStates[NUM_RELAYS] = {false, false, false, false}; // Estado actual de los relés
+bool relayStates[NUM_RELAYS] = {false, false, false, false}; // Estado actual (ON/OFF) de cada relé
 
-// Sensor DHT11
-const int DHT_PIN = 26;
-#define DHT_TYPE DHT11 // o DHT22 si usas ese
-float currentTemperature = -99.0;
-float currentHumidity = -99.0;
+// Sensor DHT11 de Temperatura y Humedad
+const int DHT_PIN = 26;      // Pin de datos del sensor DHT
+#define DHT_TYPE DHT11       // Tipo de sensor DHT (DHT11 o DHT22)
+float currentTemperature = -99.0; // Valor inicial inválido para la temperatura
+float currentHumidity = -99.0;  // Valor inicial inválido para la humedad
 
 // Encoder Rotativo
-const int ENCODER_CLK_PIN = 13;
-const int ENCODER_DT_PIN = 14;
-const int ENCODER_SW_PIN = 27;
-volatile int encoderPos = 0;
-volatile int lastEncoderPos = 0;
-volatile bool encoderSWPressed = false;
-unsigned long lastEncoderActivityTime = 0;
-const unsigned long MENU_TIMEOUT_MS = 10000; // 10 segundos
+const int ENCODER_CLK_PIN = 13; // Pin CLK del encoder
+const int ENCODER_DT_PIN = 14;  // Pin DT del encoder
+const int ENCODER_SW_PIN = 27;  // Pin SW (botón) del encoder
+volatile long encoderPos = 0;   // Posición actual del encoder (modificada por ISR)
+volatile long lastReportedEncoderPos = 0; // Última posición del encoder reportada al loop principal
+volatile bool encoderSWStatusChanged = false; // Flag para indicar cambio en el botón del encoder (manejado por ISR)
+unsigned long lastEncoderActivityTime = 0;    // Timestamp de la última actividad del encoder (para timeout del menú)
+const unsigned long MENU_TIMEOUT_MS = 10000;  // 10 segundos de inactividad para salir del menú
 
-// LED Integrado
-const int LED_BUILTIN_PIN = 2; // Generalmente el GPIO2 en ESP32 DevKits
+// LED Integrado en la placa ESP32
+const int LED_BUILTIN_PIN = 2; // Pin del LED integrado (GPIO2 en muchos ESP32)
 
-// --- Nombres de Archivos y Directorios ---
-const char* PREFERENCES_NAMESPACE = "armina-grow";
-const char* PREFERENCES_FILE_DEPRECATED = "/armina-grow-pref.json"; // Ya no se usa directamente, Preferences lo maneja
-const char* LOG_FILE = "/armina-grow-log.csv";
-const char* WEB_MONITOR_HTML_FILE = "/armina-grow-monitor.html"; // Nombre de archivo actualizado
+// --- Nombres de Archivos y Directorios en LittleFS ---
+const char* PREFERENCES_NAMESPACE = "armina-grow"; // Espacio de nombres para Preferences
+const char* LOG_FILE = "/armina-grow-log.csv";     // Nombre del archivo de registro de datos
+const char* WEB_MONITOR_HTML_FILE = "/armina-grow-monitor.html"; // Nombre del archivo HTML para el monitor web
 
 // --- Configuración WiFi y Servidor Web ---
-const char* AP_SSID_PREFIX = "ArminaGrow-Setup";
-WebServer server(80);
-DNSServer dnsServer;
-WiFiManager wifiManager;
+const char* AP_SSID_PREFIX = "ArminaGrow-Setup"; // Prefijo para el SSID del AP en modo configuración
+WebServer server(80);          // Objeto para el servidor web en el puerto 80
+DNSServer dnsServer;           // Servidor DNS para el portal cautivo
+WiFiManager wifiManager;       // Objeto para gestionar la conexión WiFi y el portal
 
-// --- Configuración NTP ---
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 60000); // Offset UTC 0, update cada 60s
+// --- Configuración NTP (Protocolo de Tiempo de Red) ---
+WiFiUDP ntpUDP; // Objeto UDP necesario para NTP
+NTPClient timeClient(ntpUDP, "pool.ntp.org", -3 * 3600, 60000); // Cliente NTP: servidor, offset UTC-3 (Argentina) en segundos, intervalo de actualización 60s
 
 // =============================================================================
-// ESTRUCTURAS DE DATOS Y ENUMS
+// OBJETOS GLOBALES DE LIBRERÍAS
 // =============================================================================
+LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS); // Objeto para el display LCD
+DHT dht(DHT_PIN, DHT_TYPE);                             // Objeto para el sensor DHT
+Preferences preferences;                                // Objeto para manejar las preferencias guardadas
 
-// --- Estados de la Interfaz de Usuario (UI) ---
-enum UIState {
-    UI_HOME,
-    UI_MENU_MAIN,
-    UI_MENU_SUB, // Para submenús como el de Sistema->WiFi, etc.
-    UI_EDIT_VALUE,
-    UI_CONFIRM_ACTION,
-    UI_TEMP_MESSAGE
+// =============================================================================
+// ESTRUCTURAS DE DATOS Y ENUMS PARA EL MENÚ
+// =============================================================================
+// Tipos de ítems que puede haber en el menú
+enum MenuItemType {
+    MENU_ITEM_SUBMENU,         // Ítem que abre otro menú (un submenú)
+    MENU_ITEM_INT_VALUE,       // Ítem para editar un valor entero
+    MENU_ITEM_BOOL_SI_NO,    // Ítem para editar un valor booleano (representado como Sí/No)
+    MENU_ITEM_ACTION,          // Ítem que ejecuta una función (acción)
+    MENU_ITEM_INFO_STRING,     // Ítem que muestra una cadena de texto fija
+    MENU_ITEM_INFO_FUNCTION,   // Ítem que muestra información obtenida de una función
+    MENU_ITEM_BACK             // Ítem para retroceder al menú anterior o salir
 };
-UIState currentUIState = UI_HOME;
-UIState previousUIState = UI_HOME; // Para volver después de un mensaje temporal
 
-// --- Definición del Menú (Ejemplo básico, expandir según necesidad) ---
-// Esta es una simplificación. Una estructura más robusta usaría structs/clases anidadas.
-const int MAIN_MENU_ITEMS = 7;
-const char* mainMenu[MAIN_MENU_ITEMS] = {
-    "1. Temp/Hum",
-    "2. Luces",
-    "3. Ventilacion",
-    "4. Extraccion",
-    "5. Riego",
-    "6. Sistema",
-    "7. Salir"
+struct MenuItem; // Pre-declaración de la estructura MenuItem
+
+// Definición de tipos para punteros a funciones usadas en el menú
+typedef void (*MenuActionFunction)(); // Puntero a función para acciones del menú
+typedef String (*MenuInfoFunction)();   // Puntero a función para obtener información a mostrar
+
+// Estructura que define un ítem individual del menú
+struct MenuItem {
+    const char* name;           // Nombre del ítem que se muestra en el LCD
+    MenuItemType type;          // Tipo de ítem
+    union {                     // Unión para almacenar diferentes tipos de "objetivos"
+        const MenuItem* subMenu;
+        int* intValueTarget;
+        bool* boolValueTarget;
+        MenuActionFunction actionFunc;
+        const char* infoString;
+        MenuInfoFunction infoFunc;
+    } target;                   // Nombre de la unión
+
+    // Parámetros adicionales para los ítems
+    int minValue;
+    int maxValue;
+    int stepValue;              // Incremento/decremento para edición de valores INT
+    const char* unit;           // Unidad del valor (ej. "C", "min", "hs")
+    const char* prefKey;        // Clave para guardar/cargar esta configuración en Preferences
+    byte subMenuSize;           // Para SUBMENU: número de ítems que contiene el submenú
 };
-int currentMenuItem = 0;
-int currentSubMenuItem = 0; // Para submenús
-int editingParamIndex = 0; // Para saber qué parámetro de un ítem se está editando
-
-// --- Estructura para Preferencias (Valores por defecto y claves) ---
-struct Config {
-    // Temp y Humedad
-    int thFrecuenciaMuestreo; // 1-60 min
-    bool thModoTest;
-
-    // Luces
-    int lucesHoraON; // 0-23
-    int lucesHoraOFF; // 0-23
-    bool lucesModoTest;
-
-    // Ventilación
-    int ventHoraON; // 0-23
-    int ventHoraOFF; // 0-23
-    bool ventModoTest;
-
-    // Extracción
-    int extrFrecuenciaHoras; // 0-24 (0=off)
-    int extrDuracionMinutos; // 1-60
-    bool extrModoTest;
-
-    // Riego
-    int riegoFrecuenciaDias; // 0-30 (0=off)
-    int riegoDuracionMinutos; // 1-30
-    int riegoHoraDisparo; // 0-23
-    bool riegoModoTest;
-
-    // Registro
-    int registroFrecuenciaHoras; // 0-24 (0=off)
-    int registroTamMax; // 1000-9999
-    bool registroModoTest;
-};
-Config currentConfig;
-
-// Claves para Preferences
-const char* KEY_TH_FREQ = "thFreq";
-const char* KEY_TH_TEST = "thTest";
-const char* KEY_LUCES_ON = "luzOn";
-const char* KEY_LUCES_OFF = "luzOff";
-const char* KEY_LUCES_TEST = "luzTest";
-const char* KEY_VENT_ON = "ventOn";
-const char* KEY_VENT_OFF = "ventOff";
-const char* KEY_VENT_TEST = "ventTest";
-const char* KEY_EXTR_FREQ = "extrFreq";
-const char* KEY_EXTR_DUR = "extrDur";
-const char* KEY_EXTR_TEST = "extrTest";
-const char* KEY_RIEGO_FREQ = "riegoFreq";
-const char* KEY_RIEGO_DUR = "riegoDur";
-const char* KEY_RIEGO_HORA = "riegoHora";
-const char* KEY_RIEGO_TEST = "riegoTest";
-const char* KEY_REG_FREQ = "regFreq";
-const char* KEY_REG_MAX = "regMax";
-const char* KEY_REG_TEST = "regTest";
-
-
-// =============================================================================
-// OBJETOS GLOBALES
-// =============================================================================
-LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
-DHT dht(DHT_PIN, DHT_TYPE);
-Preferences preferences;
 
 // =============================================================================
 // VARIABLES GLOBALES DE ESTADO Y TEMPORIZADORES
 // =============================================================================
+// Timers para tareas periódicas
 unsigned long lastDHTReadTime = 0;
 unsigned long lastLogTime = 0;
 unsigned long lastLEDToggleTime = 0;
 unsigned long tempMessageStartTime = 0;
 unsigned long tempMessageDuration = 0;
 
+// Estado de la conexión WiFi
 bool wifiConnected = false;
 String currentSSID = "";
 String currentIP = "";
 
-// Para el parpadeo del LED integrado
+// Variables para el control del parpadeo del LED integrado
 int ledBlinkState = LOW;
 int ledBlinkCount = 0;
 const int NORMAL_MODE_BLINK_COUNT = 2;
-unsigned long ledBlinkIntervalNormal = 150; // ms entre parpadeos rápidos
-unsigned long ledBlinkPauseNormal = 3000 - (NORMAL_MODE_BLINK_COUNT * 2 * ledBlinkIntervalNormal); // Pausa para completar 3s
-unsigned long ledBlinkIntervalConfig = 1000; // 1s ON, 1s OFF
+unsigned long ledBlinkIntervalNormal = 150;
+unsigned long ledBlinkPauseNormal = 3000 - (NORMAL_MODE_BLINK_COUNT * 2 * ledBlinkIntervalNormal);
+unsigned long ledBlinkIntervalConfig = 1000;
 
-// Para la lógica de control de relés basada en tiempo
+// Timers y estados para la lógica de control de relés programada
 unsigned long lastLucesCheck = 0;
 unsigned long lastVentCheck = 0;
-unsigned long lastExtraccionActivationTime = 0; // Para frecuencia de extracción
-unsigned long lastRiegoActivationTime = 0; // Para frecuencia de riego
-bool extraccionActive = false; // Para saber si la extracción está en su ciclo de duración
+unsigned long lastExtraccionActivationTime = 0;
+unsigned long lastRiegoActivationTime = 0;
+bool extraccionActive = false;
 unsigned long extraccionStartTime = 0;
-bool riegoActive = false; // Para saber si el riego está en su ciclo de duración
+bool riegoActive = false;
 unsigned long riegoStartTime = 0;
 
+// --- Estados de la Interfaz de Usuario (UI) ---
+enum UIState {
+    UI_HOME,                // Pantalla principal
+    UI_MENU_NAVIGATE,       // Navegando por un menú/submenú
+    UI_EDIT_INT_VALUE,      // Editando un valor entero
+    UI_EDIT_BOOL_VALUE,     // Editando un valor booleano
+    UI_SHOW_INFO,           // Mostrando una pantalla de información
+    UI_TEMP_MESSAGE         // Mostrando un mensaje temporal
+};
+UIState currentUIState = UI_HOME;
+UIState previousUIState = UI_HOME; // Para volver después de un mensaje temporal
+
+// --- Variables para la Navegación del Menú ---
+const MenuItem* currentActiveMenu = nullptr; // Menú actualmente visible
+byte currentActiveMenuSize = 0;        // Número de ítems en el menú activo
+byte selectedMenuItemIndex = 0;      // Índice del ítem resaltado en PANTALLA (0 o 1 si LCD es de 2 filas)
+byte topMenuItemIndex = 0;           // Índice (del array `currentActiveMenu`) del ítem en la primera fila del LCD
+
+const byte MAX_MENU_DEPTH = 5;         // Máxima profundidad de submenús
+struct MenuNavigationState {           // Estructura para guardar el estado de un nivel de menú
+    const MenuItem* menuItems;
+    byte menuSize;
+    byte selectedIndexOnScreen;
+    byte topItemIndexInArray;
+};
+MenuNavigationState menuNavigationStack[MAX_MENU_DEPTH]; // Pila para navegación "Atrás"
+byte currentMenuDepth = 0;             // Nivel de profundidad actual en el menú
+
+// Buffers para la edición de valores en el menú
+int    editingIntValueBuffer;
+bool   editingBoolValueBuffer;
+const MenuItem* itemBeingEditedOrShown = nullptr; // Ítem que se está editando o cuya info se muestra
+String infoStringToDisplay = "";       // String para mostrar en UI_SHOW_INFO
+
+bool forceLcdUpdate = true;
+
+// --- Estructura para almacenar todas las configuraciones del dispositivo ---
+struct Config {
+    int thFrecuenciaMuestreo; bool thModoTest;
+    int lucesHoraON; int lucesHoraOFF; bool lucesModoTest;
+    int ventHoraON; int ventHoraOFF; bool ventModoTest;
+    int extrFrecuenciaHoras; int extrDuracionMinutos; bool extrModoTest;
+    int riegoFrecuenciaDias; int riegoDuracionMinutos; int riegoHoraDisparo; bool riegoModoTest;
+    int registroFrecuenciaHoras; int registroTamMax; bool registroModoTest;
+};
+Config currentConfig; // Variable global que almacena la configuración actual
+
+// Claves para la persistencia de datos en Preferences
+const char* KEY_TH_FREQ = "thFreq"; const char* KEY_TH_TEST = "thTest";
+const char* KEY_LUCES_ON = "luzOn"; const char* KEY_LUCES_OFF = "luzOff"; const char* KEY_LUCES_TEST = "luzTest";
+const char* KEY_VENT_ON = "ventOn"; const char* KEY_VENT_OFF = "ventOff"; const char* KEY_VENT_TEST = "ventTest";
+const char* KEY_EXTR_FREQ = "extrFreq"; const char* KEY_EXTR_DUR = "extrDur"; const char* KEY_EXTR_TEST = "extrTest";
+const char* KEY_RIEGO_FREQ = "riegoFreq"; const char* KEY_RIEGO_DUR = "riegoDur"; const char* KEY_RIEGO_HORA = "riegoHora"; const char* KEY_RIEGO_TEST = "riegoTest";
+const char* KEY_REG_FREQ = "regFreq"; const char* KEY_REG_MAX = "regMax"; const char* KEY_REG_TEST = "regTest";
 
 // =============================================================================
 // DECLARACIONES DE FUNCIONES (PROTOTIPOS)
@@ -216,25 +224,30 @@ void applyLucesControl();
 void applyVentilacionControl();
 void applyExtraccionControl();
 void applyRiegoControl();
-void checkTestModes(); // Para ejecutar lógica de modo test de relés
+void checkTestModes();
 
 // --- Interfaz de Usuario (LCD y Encoder) ---
-void IRAM_ATTR handleEncoderInterrupt();
-void IRAM_ATTR handleEncoderButtonInterrupt();
-void processEncoderChanges();
-void updateDisplay();
-void displayHomeScreen();
-void displayMenuScreen();
-void displayEditValueScreen(); // Simplificado, necesitará mucha lógica aquí
-void displayConfirmScreen(); // Simplificado
-void displayTemporaryMessage(String line1, String line2, int durationMs);
-void resetMenuTimeout();
-void checkMenuTimeout();
+void IRAM_ATTR readEncoderISR();        // ISR para rotación del encoder
+void IRAM_ATTR encoderButtonISR();      // ISR para botón del encoder
+void processEncoderInput();             // Procesa entradas del encoder en el loop principal
+void handleEncoderRotation(long rotation); // Maneja la lógica de rotación
+void handleEncoderClick();              // Maneja la lógica de click
+void updateDisplay();                   // Actualiza el LCD según el estado actual
+void displayHomeScreen();               // Muestra la pantalla principal
+void displayMenuScreen();               // Muestra el menú/submenú actual
+void displayEditIntScreen();            // Muestra la pantalla de edición de enteros
+void displayEditBoolScreen();           // Muestra la pantalla de edición de Sí/No
+void displayInfoScreen();               // Muestra una pantalla de información
+void displayTemporaryMessage(String line1, String line2, int durationMs); // Muestra mensaje temporal
+void resetMenuTimeout();                // Reinicia el temporizador de inactividad del menú
+void checkMenuTimeout();                // Verifica si se debe salir del menú por inactividad
+
+void enterMenu();                       // Entra al sistema de menú
+void navigateBack();                    // Navega hacia atrás en el menú
+void saveEditedValue();                 // Guarda un valor editado
 
 // --- Gestión WiFi y NTP ---
 void setupWiFi();
-bool connectToWiFi();
-void startAPMode();
 void updateNTP();
 String getFormattedTime(bool withSeconds = false);
 String getFormattedDateTime();
@@ -244,7 +257,6 @@ String getLocalIP();
 void loadDefaultPreferences();
 void loadPreferences();
 void savePreferences();
-// void saveSinglePreference(String key, ...); // Implementar según necesidad para cada tipo
 void resetWiFiCredentialsAndRestart();
 
 // --- Gestión de Archivos (Log y Web) ---
@@ -252,8 +264,7 @@ void initLittleFS();
 void logData();
 int getLogEntryCount();
 void rotateLogIfNeeded();
-void serveFile(String path, String contentType);
-void uploadFileToLittleFS(String localPath, String fsPath); // Utilidad para desarrollo
+void serveFile(String path, String contentType, bool download = false);
 
 // --- Servidor Web ---
 void setupWebServer();
@@ -264,11 +275,117 @@ void handleRiegoManual();
 void handleDownloadLog();
 void handleLastLogEntries();
 void handleNotFound();
-void handleWiFiSaveAndRestart(); // Para el portal cautivo si se usa config manual
+// void handleWiFiSaveAndRestart(); // No es necesaria con WiFiManager, él lo maneja
 
 // --- Utilidades ---
-void blinkLED();
 void printSerialDebug(String message);
+void blinkLED();
+
+// =============================================================================
+// DEFINICIÓN DE FUNCIONES DE ACCIÓN E INFORMACIÓN DEL MENÚ
+// =============================================================================
+// Funciones que se ejecutan al seleccionar ciertos ítems del menú
+void action_SalirDelMenu() { currentUIState = UI_HOME; printSerialDebug("Accion: Salir del Menu -> UI_HOME"); forceLcdUpdate = true; }
+void action_ConfirmarReinicio() { printSerialDebug("Accion: Reiniciando..."); displayTemporaryMessage("Sistema", "Reiniciando...", 1800); delay(2000); ESP.restart(); }
+void action_ConfirmarOlvidoRed() { printSerialDebug("Accion: Olvidando Red..."); displayTemporaryMessage("WiFi", "Borrando Red...", 1800); delay(2000); resetWiFiCredentialsAndRestart(); }
+void action_ConfirmarBorrarLog() {
+    if (LittleFS.exists(LOG_FILE)) { LittleFS.remove(LOG_FILE); printSerialDebug("Accion: Registro borrado."); displayTemporaryMessage("Registro", "Borrado!", 2000); }
+    else { printSerialDebug("Accion: Log no existe."); displayTemporaryMessage("Registro", "Ya vacio", 2000); }
+    // El mensaje temporal se encargará de volver al estado anterior (menú)
+}
+// Funciones que devuelven strings para mostrar en el menú
+String info_GetWiFiSSID() { return wifiConnected ? currentSSID : "N/A"; }
+String info_GetDeviceIP() { return getLocalIP(); }
+String info_GetFirmwareVersion() { return String(FIRMWARE_VERSION); }
+
+// =============================================================================
+// ESTRUCTURAS DE MENÚ DETALLADAS (CON INICIALIZADORES DESIGNADOS CORREGIDOS)
+// =============================================================================
+// Nivel 3: Menús de Confirmación (usados como submenús)
+const MenuItem menuReinicio_ConfirmSubMenu[] = {
+    {.name = "Si, reiniciar", .type = MENU_ITEM_ACTION, .target = {.actionFunc = action_ConfirmarReinicio}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0},
+    {.name = "No, Atras", .type = MENU_ITEM_BACK, .target = {.actionFunc = nullptr}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0}
+};
+const MenuItem menuOlvidoRed_ConfirmSubMenu[] = {
+    {.name = "Si, olvidar", .type = MENU_ITEM_ACTION, .target = {.actionFunc = action_ConfirmarOlvidoRed}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0},
+    {.name = "No, Atras", .type = MENU_ITEM_BACK, .target = {.actionFunc = nullptr}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0}
+};
+const MenuItem menuBorrarLog_ConfirmSubMenu[] = {
+    {.name = "Si, borrar", .type = MENU_ITEM_ACTION, .target = {.actionFunc = action_ConfirmarBorrarLog}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0},
+    {.name = "No, Atras", .type = MENU_ITEM_BACK, .target = {.actionFunc = nullptr}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0}
+};
+
+// Nivel 2: Submenú "Registro" (dentro de "Sistema")
+const MenuItem menuSistema_RegistroSubMenu[] = {
+    {.name = "Frecuencia", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.registroFrecuenciaHoras}, .minValue = 0, .maxValue = 24, .stepValue = 1, .unit = "hs", .prefKey = KEY_REG_FREQ, .subMenuSize = 0},
+    {.name = "Tamano max.", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.registroTamMax}, .minValue = 1000, .maxValue = 9999, .stepValue = 100, .unit = "regs", .prefKey = KEY_REG_MAX, .subMenuSize = 0},
+    {.name = "Borrar Logs", .type = MENU_ITEM_SUBMENU, .target = {.subMenu = menuBorrarLog_ConfirmSubMenu}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = sizeof(menuBorrarLog_ConfirmSubMenu)/sizeof(MenuItem)},
+    {.name = "Modo Test", .type = MENU_ITEM_BOOL_SI_NO, .target = {.boolValueTarget = &currentConfig.registroModoTest}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = KEY_REG_TEST, .subMenuSize = 0},
+    {.name = "Atras", .type = MENU_ITEM_BACK, .target = {.actionFunc = nullptr}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0}
+};
+
+// Nivel 2: Submenú "Sistema"
+const MenuItem menuSistema_SubMenu[] = {
+    {.name = "WiFi SSID", .type = MENU_ITEM_INFO_FUNCTION, .target = {.infoFunc = info_GetWiFiSSID}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0},
+    {.name = "Direccion IP", .type = MENU_ITEM_INFO_FUNCTION, .target = {.infoFunc = info_GetDeviceIP}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0},
+    {.name = "Olvido Red", .type = MENU_ITEM_SUBMENU, .target = {.subMenu = menuOlvidoRed_ConfirmSubMenu}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = sizeof(menuOlvidoRed_ConfirmSubMenu)/sizeof(MenuItem)},
+    {.name = "Reiniciar Disp.", .type = MENU_ITEM_SUBMENU, .target = {.subMenu = menuReinicio_ConfirmSubMenu}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = sizeof(menuReinicio_ConfirmSubMenu)/sizeof(MenuItem)},
+    {.name = "Firmware Ver.", .type = MENU_ITEM_INFO_FUNCTION, .target = {.infoFunc = info_GetFirmwareVersion}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0},
+    {.name = "Registro Datos", .type = MENU_ITEM_SUBMENU, .target = {.subMenu = menuSistema_RegistroSubMenu}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = sizeof(menuSistema_RegistroSubMenu)/sizeof(MenuItem)},
+    {.name = "Atras", .type = MENU_ITEM_BACK, .target = {.actionFunc = nullptr}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0}
+};
+
+// Nivel 2: Submenú "Riego"
+const MenuItem menuRiego_SubMenu[] = {
+    {.name = "Frecuencia", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.riegoFrecuenciaDias}, .minValue = 0, .maxValue = 30, .stepValue = 1, .unit = "dias", .prefKey = KEY_RIEGO_FREQ, .subMenuSize = 0},
+    {.name = "Duracion", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.riegoDuracionMinutos}, .minValue = 1, .maxValue = 30, .stepValue = 1, .unit = "min", .prefKey = KEY_RIEGO_DUR, .subMenuSize = 0},
+    {.name = "Hora Disparo", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.riegoHoraDisparo}, .minValue = 0, .maxValue = 23, .stepValue = 1, .unit = "hs", .prefKey = KEY_RIEGO_HORA, .subMenuSize = 0},
+    {.name = "Modo Test", .type = MENU_ITEM_BOOL_SI_NO, .target = {.boolValueTarget = &currentConfig.riegoModoTest}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = KEY_RIEGO_TEST, .subMenuSize = 0},
+    {.name = "Atras", .type = MENU_ITEM_BACK, .target = {.actionFunc = nullptr}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0}
+};
+
+// Nivel 2: Submenú "Extraccion"
+const MenuItem menuExtraccion_SubMenu[] = {
+    {.name = "Frecuencia", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.extrFrecuenciaHoras}, .minValue = 0, .maxValue = 24, .stepValue = 1, .unit = "hs", .prefKey = KEY_EXTR_FREQ, .subMenuSize = 0},
+    {.name = "Duracion", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.extrDuracionMinutos}, .minValue = 1, .maxValue = 60, .stepValue = 1, .unit = "min", .prefKey = KEY_EXTR_DUR, .subMenuSize = 0},
+    {.name = "Modo Test", .type = MENU_ITEM_BOOL_SI_NO, .target = {.boolValueTarget = &currentConfig.extrModoTest}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = KEY_EXTR_TEST, .subMenuSize = 0},
+    {.name = "Atras", .type = MENU_ITEM_BACK, .target = {.actionFunc = nullptr}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0}
+};
+
+// Nivel 2: Submenú "Ventilacion"
+const MenuItem menuVentilacion_SubMenu[] = {
+    {.name = "Hora ON", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.ventHoraON}, .minValue = 0, .maxValue = 23, .stepValue = 1, .unit = "hs", .prefKey = KEY_VENT_ON, .subMenuSize = 0},
+    {.name = "Hora OFF", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.ventHoraOFF}, .minValue = 0, .maxValue = 23, .stepValue = 1, .unit = "hs", .prefKey = KEY_VENT_OFF, .subMenuSize = 0},
+    {.name = "Modo Test", .type = MENU_ITEM_BOOL_SI_NO, .target = {.boolValueTarget = &currentConfig.ventModoTest}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = KEY_VENT_TEST, .subMenuSize = 0},
+    {.name = "Atras", .type = MENU_ITEM_BACK, .target = {.actionFunc = nullptr}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0}
+};
+
+// Nivel 2: Submenú "Luces"
+const MenuItem menuLuces_SubMenu[] = {
+    {.name = "Hora ON", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.lucesHoraON}, .minValue = 0, .maxValue = 23, .stepValue = 1, .unit = "hs", .prefKey = KEY_LUCES_ON, .subMenuSize = 0},
+    {.name = "Hora OFF", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.lucesHoraOFF}, .minValue = 0, .maxValue = 23, .stepValue = 1, .unit = "hs", .prefKey = KEY_LUCES_OFF, .subMenuSize = 0},
+    {.name = "Modo Test", .type = MENU_ITEM_BOOL_SI_NO, .target = {.boolValueTarget = &currentConfig.lucesModoTest}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = KEY_LUCES_TEST, .subMenuSize = 0},
+    {.name = "Atras", .type = MENU_ITEM_BACK, .target = {.actionFunc = nullptr}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0}
+};
+
+// Nivel 2: Submenú "Temp. y Humedad"
+const MenuItem menuTempHum_SubMenu[] = {
+    {.name = "Frec. Muestra", .type = MENU_ITEM_INT_VALUE, .target = {.intValueTarget = &currentConfig.thFrecuenciaMuestreo}, .minValue = 1, .maxValue = 60, .stepValue = 1, .unit = "min", .prefKey = KEY_TH_FREQ, .subMenuSize = 0},
+    {.name = "Modo Test", .type = MENU_ITEM_BOOL_SI_NO, .target = {.boolValueTarget = &currentConfig.thModoTest}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = KEY_TH_TEST, .subMenuSize = 0},
+    {.name = "Atras", .type = MENU_ITEM_BACK, .target = {.actionFunc = nullptr}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0}
+};
+
+// Nivel 1: Menú Principal
+const MenuItem menuPrincipal_MainMenu[] = {
+    {.name = "Temp/Humedad", .type = MENU_ITEM_SUBMENU, .target = {.subMenu = menuTempHum_SubMenu}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = sizeof(menuTempHum_SubMenu)/sizeof(MenuItem)},
+    {.name = "Luces", .type = MENU_ITEM_SUBMENU, .target = {.subMenu = menuLuces_SubMenu}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = sizeof(menuLuces_SubMenu)/sizeof(MenuItem)},
+    {.name = "Ventilacion", .type = MENU_ITEM_SUBMENU, .target = {.subMenu = menuVentilacion_SubMenu}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = sizeof(menuVentilacion_SubMenu)/sizeof(MenuItem)},
+    {.name = "Extraccion", .type = MENU_ITEM_SUBMENU, .target = {.subMenu = menuExtraccion_SubMenu}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = sizeof(menuExtraccion_SubMenu)/sizeof(MenuItem)},
+    {.name = "Riego", .type = MENU_ITEM_SUBMENU, .target = {.subMenu = menuRiego_SubMenu}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = sizeof(menuRiego_SubMenu)/sizeof(MenuItem)},
+    {.name = "Sistema", .type = MENU_ITEM_SUBMENU, .target = {.subMenu = menuSistema_SubMenu}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = sizeof(menuSistema_SubMenu)/sizeof(MenuItem)},
+    {.name = "Salir del Menu", .type = MENU_ITEM_ACTION, .target = {.actionFunc = action_SalirDelMenu}, .minValue = 0, .maxValue = 0, .stepValue = 0, .unit = nullptr, .prefKey = nullptr, .subMenuSize = 0}
+};
+
 
 // =============================================================================
 // SETUP
@@ -285,9 +402,10 @@ void setup() {
     pinMode(ENCODER_CLK_PIN, INPUT_PULLUP);
     pinMode(ENCODER_DT_PIN, INPUT_PULLUP);
     pinMode(ENCODER_SW_PIN, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(ENCODER_CLK_PIN), handleEncoderInterrupt, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(ENCODER_DT_PIN), handleEncoderInterrupt, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(ENCODER_SW_PIN), handleEncoderButtonInterrupt, FALLING); // Pulsador activo bajo
+    // CORREGIDO: Usar las ISRs implementadas
+    attachInterrupt(digitalPinToInterrupt(ENCODER_CLK_PIN), readEncoderISR, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(ENCODER_DT_PIN), readEncoderISR, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(ENCODER_SW_PIN), encoderButtonISR, FALLING); // Pulsador activo bajo
 
     // Inicializar LCD
     lcd.init();
@@ -296,20 +414,16 @@ void setup() {
     lcd.print("Armina Grow");
     lcd.setCursor(0, 1);
     lcd.print("Iniciando...");
-    delay(2000);
+    delay(1500);
 
     // Inicializar LittleFS
     initLittleFS();
-    // Aquí podrías tener una función para subir el armina-grow-monitor.html si no existe
-    // uploadFileToLittleFS("path/to/your/local/armina-grow-monitor.html", WEB_MONITOR_HTML_FILE);
-
     // Cargar Preferencias
-    preferences.begin(PREFERENCES_NAMESPACE, false); // false = R/W mode
+    preferences.begin(PREFERENCES_NAMESPACE, false);
     loadPreferences(); // Carga desde NVS o usa defaults si no existen
 
     // Inicializar DHT
     dht.begin();
-
     // Configurar pines de Relés
     for (int i = 0; i < NUM_RELAYS; i++) {
         pinMode(relayPins[i], OUTPUT);
@@ -318,7 +432,7 @@ void setup() {
     }
 
     // Configurar WiFi
-    setupWiFi(); // Esto manejará si entra en modo AP o se conecta a una red existente
+    setupWiFi();
 
     if (wifiConnected) {
         printSerialDebug("Conectado a WiFi: " + WiFi.SSID());
@@ -332,14 +446,14 @@ void setup() {
         setupWebServer();
         server.begin();
         printSerialDebug("Servidor Web HTTP iniciado.");
-        displayHomeScreen();
     } else {
-        printSerialDebug("Modo Configuracion (AP). SSID: " + String(AP_SSID_PREFIX) + WiFi.macAddress().substring(12));
-        // El LCD ya debería mostrar "Conectar a:" y el SSID del AP desde setupWiFi()
+        printSerialDebug("Modo Configuracion (AP). SSID: " + String(AP_SSID_PREFIX));
     }
     
-    lastEncoderActivityTime = millis(); // Iniciar timeout del menú
     currentUIState = UI_HOME;
+    forceLcdUpdate = true; // Forzar el primer dibujo del LCD
+    displayHomeScreen(); // Se llama desde updateDisplay() en el primer loop si forceLcdUpdate es true
+    lastEncoderActivityTime = millis(); // Iniciar timeout del menú
     printSerialDebug("Setup completado.");
 }
 
@@ -351,15 +465,17 @@ void loop() {
         server.handleClient(); // Atender peticiones HTTP
         updateNTP(); // Actualizar hora periódicamente
     } else {
-        // Si no estamos conectados y WiFiManager está en modo AP, él maneja el loop.
-        // Si usamos lógica manual de AP, aquí iría dnsServer.processNextRequest();
-        // y el manejo del servidor web de configuración.
-        // Con WiFiManager, si no hay conexión, intentará reconectar o entrará en portal.
-        // Aquí podríamos verificar si WiFiManager ha terminado y necesitamos reiniciar o algo.
+        if (wifiManager.getConfigPortalActive()){
+             // WiFiManager maneja su propio loop para el portal
+        }
     }
 
-    processEncoderChanges(); // Leer y procesar entradas del encoder
-    updateDisplay(); // Actualizar el LCD según el estado de la UI
+    processEncoderInput(); // Procesa entradas del encoder y actualiza flags/estados
+    
+    if (forceLcdUpdate) { // Llama a updateDisplay solo si es necesario
+        updateDisplay();    // Actualiza el LCD según el estado actual de la UI
+    }
+    
     checkMenuTimeout(); // Volver a HOME si hay inactividad en el menú
 
     // Tareas periódicas
@@ -372,87 +488,75 @@ void loop() {
         lastDHTReadTime = currentTime;
     }
 
-    // Controlar relés según configuración (si no están en modo test manual desde web)
-    if (wifiConnected) { // Solo si hay hora y lógica de control activa
+    // Controlar relés según configuración
+    if (wifiConnected && timeClient.isTimeSet()) {
          applyScheduledControls();
     }
     checkTestModes(); // Lógica de parpadeo para modos test activados desde el menú
 
     // Registrar datos
     unsigned long logInterval = (currentConfig.registroModoTest ? 10 : currentConfig.registroFrecuenciaHoras * 3600) * 1000UL;
-    if (currentConfig.registroFrecuenciaHoras > 0 && wifiConnected && (currentTime - lastLogTime >= logInterval || lastLogTime == 0)) {
-        if (timeClient.isTimeSet()) { // Solo registrar si tenemos hora válida
-            logData();
-            lastLogTime = currentTime;
-        }
+    if (currentConfig.registroFrecuenciaHoras > 0 && wifiConnected && timeClient.isTimeSet() && (currentTime - lastLogTime >= logInterval || lastLogTime == 0)) {
+        logData();
+        lastLogTime = currentTime;
     }
     
     // Parpadeo del LED integrado
     blinkLED();
 
     // Verificar estado de conexión WiFi (si no estamos en modo AP por WiFiManager)
-    if (!wifiManager.getConfigPortalActive()) { // No verificar si el portal está activo
-        if (WiFi.status() != WL_CONNECTED && wifiConnected) {
+    if (!wifiManager.getConfigPortalActive()) {
+        bool prevWifiConnected = wifiConnected;
+        wifiConnected = (WiFi.status() == WL_CONNECTED);
+        if (prevWifiConnected && !wifiConnected) {
             printSerialDebug("Conexion WiFi perdida.");
-            wifiConnected = false;
             currentSSID = "";
             currentIP = "";
-            // No reiniciar el servidor web aquí, podría estar en proceso de reconexión.
-            // La pantalla HOME se actualizará a "Offline"
-            displayHomeScreen(); // Forzar actualización para mostrar Offline
-        } else if (WiFi.status() == WL_CONNECTED && !wifiConnected) {
-            // Se reconectó (o conectó después de un intento fallido inicial no manejado por WiFiManager)
+            forceLcdUpdate = true; // Forzar actualización para mostrar Offline
+        } else if (!prevWifiConnected && wifiConnected) {
             printSerialDebug("Conexion WiFi restablecida/establecida.");
-            wifiConnected = true;
             currentSSID = WiFi.SSID();
             currentIP = WiFi.localIP().toString();
             timeClient.begin(); // Reiniciar NTP si es necesario
             updateNTP();
-            // Si el servidor no estaba corriendo (ej. después de un fallo total), iniciarlo.
-            // server.begin(); // Esto podría ser problemático si ya estaba iniciado.
-            // Mejor asumir que WiFiManager o la lógica de setupWiFi lo maneja.
-            displayHomeScreen(); // Forzar actualización para mostrar Online
+            forceLcdUpdate = true; // Forzar actualización para mostrar Online
         }
     }
 }
 
 // =============================================================================
-// IMPLEMENTACIÓN DE FUNCIONES
+// IMPLEMENTACIÓN DE FUNCIONES DE SENSORES Y ACTUADORES
 // =============================================================================
-
-// --- Sensores y Actuadores ---
 void readDHTSensor() {
     float h = dht.readHumidity();
     float t = dht.readTemperature();
 
     if (isnan(h) || isnan(t)) {
         printSerialDebug("Error al leer DHT11/22");
-        // Mantener valores anteriores o marcarlos como inválidos
-        // currentTemperature = -99.0; // Opcional: marcar como inválido
-        // currentHumidity = -99.0;
+        // Opcional: mantener valores anteriores o marcarlos explícitamente como inválidos si es necesario
     } else {
         currentTemperature = t;
         currentHumidity = h;
         printSerialDebug("Temp: " + String(t) + "C, Hum: " + String(h) + "%");
     }
-    // Si estamos en la pantalla HOME, actualizarla inmediatamente
     if (currentUIState == UI_HOME) {
-        displayHomeScreen();
+        forceLcdUpdate = true; // Indicar que la pantalla HOME necesita redibujarse
     }
 }
 
 void controlRelay(int relayIndex, bool state, bool manualOverride) {
     if (relayIndex < 0 || relayIndex >= NUM_RELAYS) return;
-
-    // Solo cambiar y notificar si el estado es diferente o es un override manual que queremos forzar
+    // Cambiar y notificar solo si el estado es diferente o es un override manual
     if (relayStates[relayIndex] != state || manualOverride) {
         relayStates[relayIndex] = state;
         digitalWrite(relayPins[relayIndex], state ? HIGH : LOW); // Asumir relés activos en ALTO
         printSerialDebug(String(relayNames[relayIndex]) + (state ? " ENCENDIDO" : " APAGADO"));
         
-        // Mostrar mensaje temporal en LCD
-        // Solo si no estamos ya mostrando otro mensaje temporal o en medio de una edición
-        if (currentUIState != UI_TEMP_MESSAGE && currentUIState != UI_EDIT_VALUE && currentUIState != UI_CONFIRM_ACTION) {
+        // CORREGIDO: Usar los nuevos estados de UI para evitar mostrar mensaje durante edición
+        if (currentUIState != UI_TEMP_MESSAGE &&
+            currentUIState != UI_EDIT_INT_VALUE &&
+            currentUIState != UI_EDIT_BOOL_VALUE &&
+            currentUIState != UI_SHOW_INFO) {
             displayTemporaryMessage(relayNames[relayIndex], (state ? "Encendido" : "Apagado"), 2000);
         }
     }
@@ -460,8 +564,7 @@ void controlRelay(int relayIndex, bool state, bool manualOverride) {
 
 void applyScheduledControls() {
     if (!timeClient.isTimeSet()) {
-        // printSerialDebug("Hora no sincronizada, controles programados en espera.");
-        return; // No aplicar controles si no hay hora
+        return; // No aplicar controles si no hay hora sincronizada
     }
     applyLucesControl();
     applyVentilacionControl();
@@ -470,17 +573,15 @@ void applyScheduledControls() {
 }
 
 void applyLucesControl() {
-    if (currentConfig.lucesModoTest) return; // Modo test manual tiene prioridad
+    if (currentConfig.lucesModoTest) return; // Si está en modo test, la lógica programada no aplica
 
     int currentHour = timeClient.getHours();
-    // Lógica simple: si HoraON <= HoraOFF, es un ciclo dentro del mismo día.
-    // Si HoraON > HoraOFF, es un ciclo que cruza la medianoche.
     bool shouldBeOn = false;
-    if (currentConfig.lucesHoraON <= currentConfig.lucesHoraOFF) { // Ciclo diurno
+    if (currentConfig.lucesHoraON <= currentConfig.lucesHoraOFF) { // Ciclo dentro del mismo día
         if (currentHour >= currentConfig.lucesHoraON && currentHour < currentConfig.lucesHoraOFF) {
             shouldBeOn = true;
         }
-    } else { // Ciclo nocturno (cruza medianoche)
+    } else { // Ciclo que cruza la medianoche
         if (currentHour >= currentConfig.lucesHoraON || currentHour < currentConfig.lucesHoraOFF) {
             shouldBeOn = true;
         }
@@ -507,27 +608,26 @@ void applyVentilacionControl() {
 
 void applyExtraccionControl() {
     if (currentConfig.extrModoTest) return;
-    if (currentConfig.extrFrecuenciaHoras == 0) { // 0 = apagado
+    if (currentConfig.extrFrecuenciaHoras == 0) { // 0 = Extracción desactivada
         controlRelay(2, false);
         extraccionActive = false;
         return;
     }
 
     unsigned long currentTime = millis();
-    if (extraccionActive) {
+    if (extraccionActive) { // Si ya está en un ciclo de extracción
         // Verificar si el tiempo de duración ha pasado
         if (currentTime - extraccionStartTime >= (unsigned long)currentConfig.extrDuracionMinutos * 60 * 1000UL) {
             controlRelay(2, false); // Apagar extracción
             extraccionActive = false;
             printSerialDebug("Extraccion: Ciclo completado.");
         }
-    } else {
-        // Verificar si es hora de activar según frecuencia
+    } else { // Si no está activa, verificar si es hora de activar según frecuencia
         if (currentTime - lastExtraccionActivationTime >= (unsigned long)currentConfig.extrFrecuenciaHoras * 3600 * 1000UL) {
             controlRelay(2, true); // Encender extracción
             extraccionActive = true;
             extraccionStartTime = currentTime;
-            lastExtraccionActivationTime = currentTime;
+            lastExtraccionActivationTime = currentTime; // Actualizar para el próximo ciclo
             printSerialDebug("Extraccion: Iniciando ciclo.");
         }
     }
@@ -535,7 +635,7 @@ void applyExtraccionControl() {
 
 void applyRiegoControl() {
     if (currentConfig.riegoModoTest) return;
-    if (currentConfig.riegoFrecuenciaDias == 0) { // 0 = apagado
+    if (currentConfig.riegoFrecuenciaDias == 0) { // 0 = Riego desactivado
         controlRelay(3, false);
         riegoActive = false;
         return;
@@ -543,37 +643,32 @@ void applyRiegoControl() {
 
     unsigned long currentTime = millis();
     int currentHour = timeClient.getHours();
-    // Para la frecuencia en días, necesitamos una forma de saber si ya regamos "hoy" si la frecuencia es 1
-    // o si ya pasaron N días desde el último riego.
-    // Esto es más complejo y requiere guardar la fecha/hora del último riego en Preferences.
-    // Simplificación por ahora: se activa a la hora de disparo si ha pasado el intervalo de días.
-    // Una mejor implementación usaría el número de día del año o similar.
-
-    if (riegoActive) {
+    
+    // Esta lógica de frecuencia en días necesita ser robusta. Guardar la fecha del último riego sería ideal.
+    // Por ahora, es una simplificación basada en el tiempo transcurrido.
+    if (riegoActive) { // Si ya está en un ciclo de riego
         if (currentTime - riegoStartTime >= (unsigned long)currentConfig.riegoDuracionMinutos * 60 * 1000UL) {
-            controlRelay(3, false);
+            controlRelay(3, false); // Apagar riego
             riegoActive = false;
             printSerialDebug("Riego: Ciclo completado.");
         }
-    } else {
-        // Chequear si es la hora de disparo y si ha pasado el tiempo de frecuencia
-        // (currentTime - lastRiegoActivationTime) debería compararse con currentConfig.riegoFrecuenciaDias en milisegundos
-        // Y también currentHour == currentConfig.riegoHoraDisparo
-        // Esta es una simplificación y necesita una lógica de fecha más robusta.
-        // Por ahora, asumimos que lastRiegoActivationTime se actualiza correctamente.
+    } else { // Si no está activo, verificar si es hora de regar
         unsigned long freqMillis = (unsigned long)currentConfig.riegoFrecuenciaDias * 24 * 3600 * 1000UL;
-        if (currentHour == currentConfig.riegoHoraDisparo && (currentTime - lastRiegoActivationTime >= freqMillis || lastRiegoActivationTime == 0 /*primer riego*/)) {
-            // Para evitar múltiples disparos en la misma hora, necesitamos un flag de "ya regué hoy a esta hora"
-            // Esta es una simplificación:
-            static int lastRiegoDay = -1; // Día del año del último riego
-            if (timeClient.getDay() != lastRiegoDay || freqMillis == 0 /* si es el primer riego */) {
-                 controlRelay(3, true);
+        static int lastRiegoControlDay = -1; // Para evitar múltiples activaciones en la misma hora del mismo día
+
+        if (currentHour == currentConfig.riegoHoraDisparo && 
+            (currentTime - lastRiegoActivationTime >= freqMillis || lastRiegoActivationTime == 0 /*para el primer riego*/)) {
+             
+             // Comprobar si ya se regó hoy para esta hora de disparo (simplificado)
+             // Lo ideal sería comparar fechas completas (YYYY-MM-DD) del último riego.
+             if (timeClient.getDay() != lastRiegoControlDay || freqMillis == 0) { 
+                 controlRelay(3, true); // Encender riego
                  riegoActive = true;
                  riegoStartTime = currentTime;
                  lastRiegoActivationTime = currentTime; // Actualizar para la próxima frecuencia
-                 lastRiegoDay = timeClient.getDay();
+                 lastRiegoControlDay = timeClient.getDay(); // Marcar que hoy ya se activó a esta hora
                  printSerialDebug("Riego: Iniciando ciclo.");
-            }
+             }
         }
     }
 }
@@ -584,206 +679,439 @@ void checkTestModes() {
     static bool testBlinkState[NUM_RELAYS] = {false};
 
     bool modes[] = {currentConfig.lucesModoTest, currentConfig.ventModoTest, currentConfig.extrModoTest, currentConfig.riegoModoTest};
-
     for (int i = 0; i < NUM_RELAYS; ++i) {
         if (modes[i]) { // Si el modo test está activo para este relé
             if (currentTime - lastTestBlinkTime[i] >= 5000) { // Cada 5 segundos
-                testBlinkState[i] = true; // Encender
+                testBlinkState[i] = true; // Marcar para encender
                 controlRelay(i, true, true); // Forzar encendido
-                lastTestBlinkTime[i] = currentTime;
-                printSerialDebug(String(relayNames[i]) + " Modo Test: ON (1s)");
-            } else if (testBlinkState[i] && (currentTime - lastTestBlinkTime[i] >= 1000)) { // 1 segundo después
-                testBlinkState[i] = false; // Apagar
+                lastTestBlinkTime[i] = currentTime; // Resetear timer del ciclo de 5s
+                // printSerialDebug(String(relayNames[i]) + " Modo Test: ON (1s)");
+            } else if (testBlinkState[i] && (currentTime - lastTestBlinkTime[i] >= 1000)) { // Si está encendido por test y pasó 1 segundo
+                testBlinkState[i] = false; // Marcar para apagar
                 controlRelay(i, false, true); // Forzar apagado
-                // No actualizar lastTestBlinkTime[i] aquí para que el próximo ciclo de 5s comience desde el ON
+                // No se resetea lastTestBlinkTime[i] aquí, para que se complete el ciclo de 5s antes del próximo ON
             }
-        } else {
-            // Si el modo test se acaba de desactivar, asegurar que el relé vuelva a su estado programado
-            if (testBlinkState[i]) { // Estaba en test y se apagó el test
-                 testBlinkState[i] = false; // Resetear estado de test
+        } else { // Si el modo test NO está activo
+            if (testBlinkState[i]) { // Si justo se desactivó el modo test y el relé quedó encendido por test
+                 testBlinkState[i] = false; // Resetear el estado de parpadeo del test
                  // La lógica de applyScheduledControls se encargará de poner el estado correcto.
-                 // O podríamos forzar una reevaluación aquí.
+                 // Forzar una reevaluación podría ser útil si el cambio de modo test no coincide con un ciclo de control.
+                 forceLcdUpdate = true; 
             }
         }
     }
 }
 
+// =============================================================================
+// IMPLEMENTACIÓN DE FUNCIONES DE UI, ENCODER Y MENÚ
+// =============================================================================
+// Variables para el debounce del botón del encoder en el loop principal
+long debouncedEncoderSWValue = HIGH; // Estado actual debounced del botón (HIGH = no presionado)
+unsigned long lastEncoderSWTime = 0;   // Última vez que el botón cambió de estado (para debounce)
+const unsigned long ENCODER_SW_DEBOUNCE_MS = 50; // Tiempo de debounce para el botón
 
-// --- Interfaz de Usuario (LCD y Encoder) ---
-// ISR para el encoder (CLK y DT)
-void IRAM_ATTR handleEncoderInterrupt() {
-    // Implementación básica de lectura de encoder.
-    // Una librería dedicada como ESP32Encoder es más robusta.
-    static int8_t lastCLK = LOW;
-    static int8_t lastDT = LOW;
-    int8_t clkState = digitalRead(ENCODER_CLK_PIN);
-    int8_t dtState = digitalRead(ENCODER_DT_PIN);
+// ISR para el encoder (CLK y DT) - Actualiza `encoderPos`
+void IRAM_ATTR readEncoderISR() {
+    byte clkS = digitalRead(ENCODER_CLK_PIN);
+    byte dtS = digitalRead(ENCODER_DT_PIN);
+    static byte oldAB = 0; // Almacena el estado anterior de CLK y DT combinados
+    byte newAB = (clkS << 1) | dtS; // Combina los dos bits en un byte (CLK en bit 1, DT en bit 0)
 
-    if (clkState != lastCLK) {
-        if (clkState == LOW) { // Flanco descendente de CLK
-            if (dtState == HIGH) { // Si DT es HIGH, giro antihorario
-                encoderPos--;
-            } else { // Si DT es LOW, giro horario
-                encoderPos++;
+    if (newAB != oldAB) { // Solo procesar si hay un cambio de estado
+        // Decodificación de encoder de cuadratura estándar (simplificada)
+        // Compara la transición de oldAB a newAB para determinar dirección
+        if (oldAB == 0b00) { if (newAB == 0b01) encoderPos++; else if (newAB == 0b10) encoderPos--; }
+        else if (oldAB == 0b01) { if (newAB == 0b11) encoderPos++; else if (newAB == 0b00) encoderPos--; }
+        else if (oldAB == 0b11) { if (newAB == 0b10) encoderPos++; else if (newAB == 0b01) encoderPos--; }
+        else if (oldAB == 0b10) { if (newAB == 0b00) encoderPos++; else if (newAB == 0b11) encoderPos--; }
+        oldAB = newAB; // Actualizar el estado anterior
+    }
+}
+
+// ISR para el botón del encoder - Solo establece un flag
+void IRAM_ATTR encoderButtonISR() {
+    encoderSWStatusChanged = true; // Indica que el botón fue presionado (o liberado)
+}
+
+// Procesa las entradas del encoder (rotación y botón) en el loop principal
+void processEncoderInput() {
+    // Debounce y manejo del botón del encoder
+    if (encoderSWStatusChanged) {
+        unsigned long currentTime = millis();
+        byte currentSWState = digitalRead(ENCODER_SW_PIN); // Leer estado actual del botón
+        if (currentSWState == LOW && debouncedEncoderSWValue == HIGH && (currentTime - lastEncoderSWTime > ENCODER_SW_DEBOUNCE_MS)) {
+            // Botón presionado (flanco descendente, debounced)
+            printSerialDebug("Encoder SW Presionado (Debounced)");
+            handleEncoderClick(); // Procesar la acción del click
+            resetMenuTimeout();   // Reiniciar timeout de inactividad del menú
+            lastEncoderSWTime = currentTime; // Actualizar tiempo para el próximo debounce
+        }
+        debouncedEncoderSWValue = currentSWState; // Guardar estado actual para la lógica de debounce
+        encoderSWStatusChanged = false; // Flag procesado
+    }
+
+    // Procesar rotación del encoder
+    if (encoderPos != lastReportedEncoderPos) {
+        long rotation = encoderPos - lastReportedEncoderPos; // Calcular cuántos "pasos" giró
+        lastReportedEncoderPos = encoderPos; // Actualizar la última posición reportada
+        printSerialDebug("Encoder Rotado: " + String(rotation > 0 ? "CW" : "CCW") + " (pos: " + String(encoderPos) + ")");
+        handleEncoderRotation(rotation); // Procesar la acción de rotación
+        resetMenuTimeout();              // Reiniciar timeout de inactividad
+        forceLcdUpdate = true;           // Marcar para redibujar el LCD ya que la selección/valor cambió
+    }
+}
+
+// Inicializa y entra al sistema de menú
+void enterMenu() {
+    currentUIState = UI_MENU_NAVIGATE; // Establecer estado de navegación de menú
+    currentMenuDepth = 0;              // Nivel 0 (menú principal)
+    // Cargar el menú principal en la pila de navegación
+    menuNavigationStack[0] = {menuPrincipal_MainMenu, (byte)(sizeof(menuPrincipal_MainMenu) / sizeof(MenuItem)), 0, 0};
+    currentActiveMenu = menuNavigationStack[0].menuItems;       // Menú actual
+    currentActiveMenuSize = menuNavigationStack[0].menuSize;    // Tamaño del menú actual
+    selectedMenuItemIndex = menuNavigationStack[0].selectedIndexOnScreen; // Índice seleccionado en pantalla (0 o 1)
+    topMenuItemIndex = menuNavigationStack[0].topItemIndexInArray;      // Índice del array en la línea superior
+    printSerialDebug("Entrando al Menu Principal.");
+    forceLcdUpdate = true; // Forzar redibujo del LCD
+}
+
+// Navega hacia atrás en la jerarquía del menú
+void navigateBack() {
+    if (currentMenuDepth > 0) { // Si estamos en un submenú
+        currentMenuDepth--;      // Decrementar profundidad
+        // Restaurar estado del menú desde la pila
+        currentActiveMenu = menuNavigationStack[currentMenuDepth].menuItems;
+        currentActiveMenuSize = menuNavigationStack[currentMenuDepth].menuSize;
+        selectedMenuItemIndex = menuNavigationStack[currentMenuDepth].selectedIndexOnScreen;
+        topMenuItemIndex = menuNavigationStack[currentMenuDepth].topItemIndexInArray;
+        currentUIState = UI_MENU_NAVIGATE; // Volver al estado de navegación
+        printSerialDebug("Menu: Atras a nivel " + String(currentMenuDepth));
+    } else { // Si estábamos en el menú principal, "Atrás" significa salir
+        currentUIState = UI_HOME;
+        printSerialDebug("Menu: Atras desde Menu Principal -> UI_HOME");
+    }
+    forceLcdUpdate = true; // Forzar redibujo
+}
+
+// Guarda el valor que se estaba editando
+void saveEditedValue() {
+    if (!itemBeingEditedOrShown) return; // Seguridad: no hacer nada si no hay ítem en edición
+
+    printSerialDebug("Guardando valor para: " + String(itemBeingEditedOrShown->name));
+    bool preferenceChanged = false; // Flag para saber si se debe guardar en Preferences
+
+    // Actualizar la variable de configuración (`currentConfig`) según el tipo de ítem
+    if (itemBeingEditedOrShown->type == MENU_ITEM_INT_VALUE) {
+        if (*itemBeingEditedOrShown->target.intValueTarget != editingIntValueBuffer) {
+            *itemBeingEditedOrShown->target.intValueTarget = editingIntValueBuffer; // Actualizar variable en RAM
+            preferenceChanged = true;
+        }
+        printSerialDebug("Valor INT guardado: " + String(editingIntValueBuffer));
+    } else if (itemBeingEditedOrShown->type == MENU_ITEM_BOOL_SI_NO) {
+        if (*itemBeingEditedOrShown->target.boolValueTarget != editingBoolValueBuffer) {
+            *itemBeingEditedOrShown->target.boolValueTarget = editingBoolValueBuffer; // Actualizar variable en RAM
+            preferenceChanged = true;
+        }
+        printSerialDebug("Valor BOOL guardado: " + String(editingBoolValueBuffer ? "Si" : "No"));
+    }
+
+    // Si el valor cambió y el ítem tiene una clave de Preferences asociada, guardar en NVS
+    if (preferenceChanged && itemBeingEditedOrShown->prefKey != nullptr) {
+        // preferences.begin(PREFERENCES_NAMESPACE, false); // Asegurarse que Preferences está abierto
+        if (itemBeingEditedOrShown->type == MENU_ITEM_INT_VALUE) {
+            preferences.putInt(itemBeingEditedOrShown->prefKey, editingIntValueBuffer);
+        } else if (itemBeingEditedOrShown->type == MENU_ITEM_BOOL_SI_NO) {
+            preferences.putBool(itemBeingEditedOrShown->prefKey, editingBoolValueBuffer);
+        }
+        // preferences.end(); // Opcional: cerrar Preferences para asegurar guardado.
+                           // Si se hacen muchas escrituras, es mejor mantenerlo abierto y cerrarlo al final.
+                           // putX() generalmente escribe al NVS.
+        printSerialDebug("Preferencia guardada para key: " + String(itemBeingEditedOrShown->prefKey));
+    }
+    
+    itemBeingEditedOrShown = nullptr; // Limpiar puntero al ítem editado
+    currentUIState = UI_MENU_NAVIGATE; // Volver al estado de navegación del menú
+    forceLcdUpdate = true; // Forzar redibujo del menú
+}
+
+// Maneja la lógica de rotación del encoder
+void handleEncoderRotation(long rotation) {
+    if (currentUIState == UI_HOME) {
+        enterMenu(); // Si estamos en HOME, cualquier rotación entra al menú
+    } else if (currentUIState == UI_MENU_NAVIGATE) { // Navegando un menú
+        if (rotation > 0) { // Giro horario (mover selección hacia abajo en pantalla)
+            // Si la selección actual no es la última línea Y no es el último ítem visible
+            if (selectedMenuItemIndex < min((byte)(LCD_ROWS - 1), (byte)(currentActiveMenuSize - topMenuItemIndex - 1))) {
+                selectedMenuItemIndex++;
+            } else if (topMenuItemIndex + LCD_ROWS < currentActiveMenuSize) { // Si hay más ítems abajo para hacer scroll
+                topMenuItemIndex++; // Hacer scroll del menú hacia abajo
+            }
+        } else { // Giro antihorario (mover selección hacia arriba en pantalla)
+            if (selectedMenuItemIndex > 0) { // Si no estamos en la primera línea de la selección
+                selectedMenuItemIndex--;
+            } else if (topMenuItemIndex > 0) { // Si no estamos al inicio del menú (se puede scrollear arriba)
+                topMenuItemIndex--; // Hacer scroll del menú hacia arriba
             }
         }
-        lastCLK = clkState;
+        // Guardar la posición actual de navegación en la pila (para "Atrás")
+        menuNavigationStack[currentMenuDepth].selectedIndexOnScreen = selectedMenuItemIndex;
+        menuNavigationStack[currentMenuDepth].topItemIndexInArray = topMenuItemIndex;
+    } else if (currentUIState == UI_EDIT_INT_VALUE && itemBeingEditedOrShown) { // Editando un valor entero
+        int step = itemBeingEditedOrShown->stepValue != 0 ? itemBeingEditedOrShown->stepValue : 1;
+        editingIntValueBuffer += (rotation > 0 ? step : -step); // Incrementar/decrementar buffer
+        // Aplicar límites min/max
+        if (editingIntValueBuffer < itemBeingEditedOrShown->minValue) editingIntValueBuffer = itemBeingEditedOrShown->minValue;
+        if (editingIntValueBuffer > itemBeingEditedOrShown->maxValue) editingIntValueBuffer = itemBeingEditedOrShown->maxValue;
+    } else if (currentUIState == UI_EDIT_BOOL_VALUE && itemBeingEditedOrShown) { // Editando un valor Sí/No
+        editingBoolValueBuffer = !editingBoolValueBuffer; // Cambiar entre true/false con cualquier rotación
+    } else if (currentUIState == UI_SHOW_INFO) { // Si se está mostrando información
+        currentUIState = UI_MENU_NAVIGATE; // Cualquier rotación vuelve al menú
+        itemBeingEditedOrShown = nullptr;  // Limpiar
     }
-    // Podrías añadir lógica similar para DT si quieres doble resolución,
-    // pero usualmente una es suficiente y más estable.
+    forceLcdUpdate = true; // Marcar para redibujar el LCD
 }
 
-// ISR para el botón del encoder
-void IRAM_ATTR handleEncoderButtonInterrupt() {
-    // Debounce simple, en una ISR no se puede usar delay.
-    static unsigned long lastInterruptTime = 0;
-    unsigned long interruptTime = millis();
-    if (interruptTime - lastInterruptTime > 200) { // 200ms debounce
-        encoderSWPressed = true;
-        lastInterruptTime = interruptTime;
+// Maneja la lógica de click del botón del encoder
+void handleEncoderClick() {
+    if (currentUIState == UI_HOME) {
+        enterMenu(); // Si estamos en HOME, un click entra al menú
+        forceLcdUpdate = true;
+        return;
     }
+    resetMenuTimeout(); // Reiniciar timeout en cualquier click dentro del menú
+
+    if (currentUIState == UI_MENU_NAVIGATE) { // Si estamos navegando un menú
+        // Obtener el ítem realmente seleccionado (considerando el scroll)
+        const MenuItem* selectedItem = &currentActiveMenu[topMenuItemIndex + selectedMenuItemIndex];
+        itemBeingEditedOrShown = selectedItem; // Guardar referencia para edición o mostrar info
+        printSerialDebug("Menu Click: " + String(selectedItem->name));
+
+        switch (selectedItem->type) {
+            case MENU_ITEM_SUBMENU: // Si es un submenú
+                if (currentMenuDepth < MAX_MENU_DEPTH - 1) { // Evitar desbordamiento de la pila
+                    // Guardar estado actual del menú en la pila
+                    menuNavigationStack[currentMenuDepth].selectedIndexOnScreen = selectedMenuItemIndex;
+                    menuNavigationStack[currentMenuDepth].topItemIndexInArray = topMenuItemIndex;
+                    currentMenuDepth++; // Incrementar profundidad
+                    // Cargar el nuevo submenú en la pila y como activo
+                    menuNavigationStack[currentMenuDepth] = {selectedItem->target.subMenu, selectedItem->subMenuSize, 0, 0};
+                    currentActiveMenu = menuNavigationStack[currentMenuDepth].menuItems;
+                    currentActiveMenuSize = menuNavigationStack[currentMenuDepth].menuSize;
+                    selectedMenuItemIndex = 0; // Resetear selección para el nuevo menú
+                    topMenuItemIndex = 0;      // Resetear scroll para el nuevo menú
+                    printSerialDebug("Entrando a Submenu: " + String(selectedItem->name));
+                } else { printSerialDebug("Error: Maxima profundidad de menu alcanzada."); }
+                break;
+            case MENU_ITEM_INT_VALUE: // Si es un valor entero editable
+                editingIntValueBuffer = *selectedItem->target.intValueTarget; // Cargar valor actual al buffer
+                currentUIState = UI_EDIT_INT_VALUE; // Cambiar a estado de edición
+                printSerialDebug("Editando INT: " + String(selectedItem->name));
+                break;
+            case MENU_ITEM_BOOL_SI_NO: // Si es un valor booleano editable
+                editingBoolValueBuffer = *selectedItem->target.boolValueTarget; // Cargar valor actual al buffer
+                currentUIState = UI_EDIT_BOOL_VALUE; // Cambiar a estado de edición
+                printSerialDebug("Editando BOOL: " + String(selectedItem->name));
+                break;
+            case MENU_ITEM_ACTION: // Si es una acción
+                if (selectedItem->target.actionFunc) {
+                    selectedItem->target.actionFunc(); // Ejecutar la función de acción
+                }
+                // El estado de la UI puede cambiar dentro de la función de acción (ej. Salir)
+                break;
+            case MENU_ITEM_BACK: // Si es "Atrás"
+                navigateBack();
+                break;
+            case MENU_ITEM_INFO_STRING: // Si es información de texto
+                infoStringToDisplay = selectedItem->target.infoString; // Preparar string
+                currentUIState = UI_SHOW_INFO; // Cambiar a estado de mostrar info
+                break;
+            case MENU_ITEM_INFO_FUNCTION: // Si es información de función
+                if (selectedItem->target.infoFunc) {
+                    infoStringToDisplay = selectedItem->target.infoFunc(); // Llamar función y preparar string
+                } else {
+                    infoStringToDisplay = "Error func";
+                }
+                currentUIState = UI_SHOW_INFO; // Cambiar a estado de mostrar info
+                break;
+        }
+    } else if (currentUIState == UI_EDIT_INT_VALUE || currentUIState == UI_EDIT_BOOL_VALUE) { // Si estábamos editando y se hizo click
+        saveEditedValue(); // Guardar el valor y volver al menú de navegación
+    } else if (currentUIState == UI_SHOW_INFO) { // Si se estaba mostrando información y se hizo click
+        currentUIState = UI_MENU_NAVIGATE; // Volver al menú de navegación
+        itemBeingEditedOrShown = nullptr;  // Limpiar puntero
+    }
+    forceLcdUpdate = true; // Marcar para redibujar el LCD
 }
 
-void processEncoderChanges() {
-    if (encoderSWPressed) {
-        printSerialDebug("Encoder SW presionado.");
-        // Lógica de click del encoder
-        handleEncoderClick();
-        encoderSWPressed = false; // Resetear flag
-        resetMenuTimeout();
-    }
+// --- Funciones de Visualización del LCD ---
+// bool forceLcdUpdate = true; // Declarada globalmente
 
-    if (encoderPos != lastEncoderPos) {
-        int diff = encoderPos - lastEncoderPos;
-        printSerialDebug("Encoder girado. Pos: " + String(encoderPos) + ", Diff: " + String(diff));
-        // Lógica de rotación del encoder
-        handleEncoderRotation(diff);
-        lastEncoderPos = encoderPos;
-        resetMenuTimeout();
-    }
-}
-
+// Actualiza el display LCD según el estado actual de la UI
 void updateDisplay() {
     if (currentUIState == UI_TEMP_MESSAGE) {
-        if (millis() - tempMessageStartTime >= tempMessageDuration) {
+        if (millis() - tempMessageStartTime >= tempMessageDuration) { // Si el mensaje temporal ya expiró
             currentUIState = previousUIState; // Volver al estado anterior
-            // Forzar redibujo de la pantalla anterior
-            if (currentUIState == UI_HOME) displayHomeScreen();
-            else if (currentUIState == UI_MENU_MAIN || currentUIState == UI_MENU_SUB) displayMenuScreen();
-            // Añadir otros estados si es necesario
+            forceLcdUpdate = true; // Forzar redibujo de la pantalla previa
+        } else {
+            return; // Mensaje temporal aún activo, no hacer nada más
         }
-        return; // No hacer nada más si estamos mostrando un mensaje temporal
     }
+    
+    // Optimización: Solo redibujar si 'forceLcdUpdate' es true.
+    // Este flag se activa cuando cambia un estado o se recibe nueva data que debe mostrarse.
+    if (!forceLcdUpdate) return;
 
-    // Lógica para dibujar la pantalla según currentUIState
+    // Llama a la función de display correspondiente al estado actual
     switch (currentUIState) {
-        case UI_HOME:
-            // La pantalla HOME se actualiza por eventos (DHT, NTP, WiFi status)
-            // No necesita redibujo constante aquí a menos que algo cambie.
-            break;
-        case UI_MENU_MAIN:
-        case UI_MENU_SUB:
-            displayMenuScreen(); // Se redibuja si currentMenuItem cambia
-            break;
-        case UI_EDIT_VALUE:
-            displayEditValueScreen();
-            break;
-        case UI_CONFIRM_ACTION:
-            displayConfirmScreen();
-            break;
-        default:
-            break;
+        case UI_HOME:             displayHomeScreen();        break;
+        case UI_MENU_NAVIGATE:    displayMenuScreen();        break;
+        case UI_EDIT_INT_VALUE:   displayEditIntScreen();     break;
+        case UI_EDIT_BOOL_VALUE:  displayEditBoolScreen();    break;
+        case UI_SHOW_INFO:        displayInfoScreen();        break;
+        default:                  displayHomeScreen();        break; // Pantalla por defecto
     }
+    forceLcdUpdate = false; // Resetea el flag después de redibujar
 }
 
+// Muestra la pantalla principal (Home)
 void displayHomeScreen() {
     lcd.clear();
-    // Línea 1: Temperatura y Humedad
     String tempStr = (currentTemperature == -99.0) ? "--.-" : String(currentTemperature, 1);
     String humStr = (currentHumidity == -99.0) ? "--.-" : String(currentHumidity, 1);
-    lcd.setCursor(0, 0);
-    lcd.print("T:" + tempStr + "C H:" + humStr + "%");
-
-    // Línea 2: Estado WiFi y Hora
+    lcd.setCursor(0, 0); lcd.print("T:" + tempStr + "C H:" + humStr + "%");
+    
     lcd.setCursor(0, 1);
-    if (wifiConnected && timeClient.isTimeSet()) {
-        lcd.print("Online  " + getFormattedTime());
-    } else if (wifiConnected && !timeClient.isTimeSet()) {
-        lcd.print("Online  --:--"); // Conectado pero sin hora
-    } else if (!wifiConnected && !wifiManager.getConfigPortalActive()) { // No conectado y no en portal
-         lcd.print("Offline --:--");
-    } else if (wifiManager.getConfigPortalActive()) { // En modo portal de configuración
-        lcd.setCursor(0,0);
-        lcd.print("Conectar a:");
+    if (wifiConnected && timeClient.isTimeSet()) { lcd.print("Online  " + getFormattedTime()); }
+    else if (wifiConnected && !timeClient.isTimeSet()) { lcd.print("Online  --:--"); } // Conectado pero sin hora NTP
+    else if (!wifiConnected && !wifiManager.getConfigPortalActive()) { lcd.print("Offline --:--"); } // Desconectado y no en portal
+    else if (wifiManager.getConfigPortalActive()) { // En modo Portal de Configuración WiFiManager
+        lcd.clear(); 
+        lcd.setCursor(0,0); 
+        String portalSsid = wifiManager.getConfigPortalSSID();
+        String linea1Display = ""; // Mantener consistencia con el callback
+        int espacioParaSsid = LCD_COLS - linea1Display.length();
+        if (portalSsid.length() > espacioParaSsid) {
+            linea1Display += portalSsid.substring(0, espacioParaSsid);
+        } else {
+            linea1Display += portalSsid;
+        }
+        lcd.print(linea1Display);
+        
         lcd.setCursor(0,1);
-        String apName = String(AP_SSID_PREFIX) + WiFi.macAddress().substring(12);
-        apName.replace(":", ""); // WiFiManager puede quitar los dos puntos
-        lcd.print(apName.substring(0,16)); // Mostrar solo los primeros 16 caracteres
-    } else { // Caso por defecto si estamos en modo AP manual (no WiFiManager)
-        lcd.print("Modo AP"); 
-        // Aquí mostrarías el SSID del AP que creaste manualmente
-    }
+        String linea2Display = "" + WiFi.softAPIP().toString();
+        if (linea2Display.length() > LCD_COLS) {
+            linea2Display = linea2Display.substring(0, LCD_COLS);
+        }
+        lcd.print(linea2Display);
+    } else { lcd.print("Modo AP"); } // Otro caso de AP (no debería ocurrir con WiFiManager)
 }
 
+// Muestra el menú/submenú actual en el LCD
 void displayMenuScreen() {
     lcd.clear();
-    // Esta es una implementación muy básica. Un menú real necesita scrolling si hay más ítems que filas.
-    // Y manejar submenús.
-    // Por ahora, solo muestra el ítem actual y el siguiente si cabe.
-    if (currentUIState == UI_MENU_MAIN) {
-        lcd.setCursor(0, 0);
-        lcd.print(">" + String(mainMenu[currentMenuItem]));
-        if (currentMenuItem + 1 < MAIN_MENU_ITEMS) {
-            lcd.setCursor(1, 1); // Sin el ">"
-            lcd.print(String(mainMenu[currentMenuItem + 1]));
-        }
-    } else if (currentUIState == UI_MENU_SUB) {
-        // Lógica para mostrar submenús
-        // Ejemplo: Si mainMenu[currentMenuItem] es "Sistema"
-        if (strcmp(mainMenu[currentMenuItem], "6. Sistema") == 0) {
-            // Aquí iría la lógica para mostrar los ítems del submenú de Sistema
-            // const char* sistemaSubMenu[] = {"WiFi", "IP", "Olvidar Red", ...};
-            // lcd.print(">" + String(sistemaSubMenu[currentSubMenuItem]));
-            lcd.print("Submenu Sistema"); // Placeholder
-        } else {
-             lcd.print("Submenu Items"); // Placeholder
+    if (!currentActiveMenu || currentActiveMenuSize == 0) {
+        lcd.print("Menu Vacio!"); return;
+    }
+
+    // Muestra hasta LCD_ROWS ítems, empezando desde topMenuItemIndex
+    for (byte i = 0; i < LCD_ROWS; i++) {
+        byte itemIndexInArray = topMenuItemIndex + i; // Índice real en el array del menú
+        if (itemIndexInArray < currentActiveMenuSize) { // Si el ítem existe
+            lcd.setCursor(0, i); // Posicionar cursor en la fila 'i'
+            if (i == selectedMenuItemIndex) { // Si es el ítem actualmente seleccionado EN PANTALLA
+                lcd.print(">"); // Indicador de selección
+            } else {
+                lcd.print(" "); // Espacio para alinear
+            }
+            // Truncar nombre del ítem si es muy largo para el LCD
+            String itemName = currentActiveMenu[itemIndexInArray].name;
+            if (itemName.length() > (LCD_COLS - 1)) { // -1 por el cursor '>' o espacio
+                itemName = itemName.substring(0, LCD_COLS - 1);
+            }
+            lcd.print(itemName);
         }
     }
 }
 
-void displayEditValueScreen() {
+// Muestra la pantalla de edición para un valor entero
+void displayEditIntScreen() {
     lcd.clear();
+    if (!itemBeingEditedOrShown) { lcd.print("Error Edicion"); return; }
+    
+    lcd.setCursor(0, 0);
+    String itemName = itemBeingEditedOrShown->name;
+    if (itemName.length() > LCD_COLS) itemName = itemName.substring(0, LCD_COLS); // Truncar
+    lcd.print(itemName);
+
+    String valStr = String(editingIntValueBuffer); // Valor actual del buffer de edición
+    if (itemBeingEditedOrShown->unit) valStr += " " + String(itemBeingEditedOrShown->unit); // Añadir unidad si existe
+    
+    lcd.setCursor(0, 1);
+    String fullEditStr = "<" + valStr + ">"; // Formato <VALOR>
+    // Truncar si es muy largo, intentando mantener los <>
+    if (fullEditStr.length() > LCD_COLS) {
+        int valActualLen = valStr.length();
+        int maxInternalLen = LCD_COLS - 2; // Espacio para <>
+        if (valActualLen > maxInternalLen) {
+            valStr = valStr.substring(0, maxInternalLen - 2) + ".."; // Truncar y añadir ".."
+        }
+        fullEditStr = "<" + valStr + ">";
+    }
+    // Centrar el string en el LCD
+    int len = fullEditStr.length();
+    int pad = (LCD_COLS - len) / 2;
+    for(int p=0; p<pad; ++p) lcd.print(" ");
+    lcd.print(fullEditStr);
+}
+
+// Muestra la pantalla de edición para un valor booleano (Sí/No)
+void displayEditBoolScreen() {
+    lcd.clear();
+    if (!itemBeingEditedOrShown) { lcd.print("Error Edicion"); return; }
+
+    lcd.setCursor(0, 0);
+    String itemName = itemBeingEditedOrShown->name;
+    if (itemName.length() > LCD_COLS) itemName = itemName.substring(0, LCD_COLS); // Truncar
+    lcd.print(itemName);
+
+    String valStr = editingBoolValueBuffer ? "Si" : "No"; // Valor actual del buffer
+    
+    lcd.setCursor(0, 1);
+    String fullEditStr = "<" + valStr + ">"; // Formato <VALOR>
+    // Centrar
+    int len = fullEditStr.length();
+    int pad = (LCD_COLS - len) / 2;
+    for(int p=0; p<pad; ++p) lcd.print(" ");
+    lcd.print(fullEditStr);
+}
+
+// Muestra una pantalla de información
+void displayInfoScreen() {
+    lcd.clear();
+    if (!itemBeingEditedOrShown) { lcd.print("Error Info"); return; }
+
     lcd.setCursor(0,0);
-    // Aquí mostrarías el nombre del parámetro y su valor actual.
-    // Ejemplo: Si editamos currentConfig.thFrecuenciaMuestreo
-    // lcd.print("TH Freq: " + String(currentConfig.thFrecuenciaMuestreo) + "m");
-    lcd.print("Editando Valor:"); // Placeholder
+    String itemName = itemBeingEditedOrShown->name;
+    // Truncar nombre del ítem si es muy largo para la primera línea
+    if (itemName.length() > LCD_COLS) itemName = itemName.substring(0, LCD_COLS);
+    lcd.print(itemName);
+    
     lcd.setCursor(0,1);
-    // lcd.print("Girar: Cambiar"); // Placeholder
-    // lcd.print("Clic: Guardar"); // Placeholder
-    // Dependiendo del parámetro, el valor se mostraría y actualizaría aquí.
-    // Por ejemplo, si currentMenuItem es 0 (Temp/Hum) y editingParamIndex es 0 (Frecuencia):
-    if (currentMenuItem == 0 && editingParamIndex == 0) {
-        lcd.print("TH Freq: " + String(currentConfig.thFrecuenciaMuestreo) + " min");
+    // Truncar la cadena de información si es muy larga para la segunda línea
+    if (infoStringToDisplay.length() > LCD_COLS) {
+        lcd.print(infoStringToDisplay.substring(0, LCD_COLS));
     } else {
-        lcd.print("Valor: XX"); // Placeholder
+        lcd.print(infoStringToDisplay);
     }
+    // Esta pantalla se mantiene visible hasta el próximo click del encoder o timeout del menú
 }
 
-void displayConfirmScreen() {
-    lcd.clear();
-    lcd.setCursor(0,0);
-    // Ejemplo: Si se va a "Olvidar Red WiFi"
-    // lcd.print("Olvidar Red?");
-    lcd.print("Confirmar Accion?"); // Placeholder
-    lcd.setCursor(0,1);
-    lcd.print(">No     Si"); // Placeholder para selección Sí/No
-}
-
+// Muestra un mensaje temporal en el LCD
 void displayTemporaryMessage(String line1, String line2, int durationMs) {
-    if (currentUIState == UI_TEMP_MESSAGE) { // Si ya hay un mensaje, no interrumpir
-        // Podríamos encolar mensajes si fuera necesario
-        return;
+    // Evitar interrumpir un mensaje temporal si ya hay uno importante (o el mismo)
+    if (currentUIState == UI_TEMP_MESSAGE && millis() < tempMessageStartTime + tempMessageDuration) { 
+        // Podríamos tener una cola de mensajes o prioridades si fuera necesario
+        return; 
     }
     previousUIState = currentUIState; // Guardar estado actual para volver
     currentUIState = UI_TEMP_MESSAGE;
@@ -791,209 +1119,106 @@ void displayTemporaryMessage(String line1, String line2, int durationMs) {
     tempMessageDuration = durationMs;
 
     lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print(line1.substring(0, LCD_COLS));
-    lcd.setCursor(0, 1);
-    lcd.print(line2.substring(0, LCD_COLS));
+    lcd.setCursor(0, 0); lcd.print(line1.substring(0, LCD_COLS)); // Truncar a tamaño del LCD
+    lcd.setCursor(0, 1); lcd.print(line2.substring(0, LCD_COLS)); // Truncar a tamaño del LCD
     printSerialDebug("LCD Temp Msg: " + line1 + " / " + line2);
+    // No se llama a forceLcdUpdate aquí, el loop de updateDisplay se encarga de volver al previousUIState
 }
 
-void handleEncoderRotation(int diff) {
-    // diff > 0 es horario, diff < 0 es antihorario
-    switch (currentUIState) {
-        case UI_HOME:
-            // Girar desde HOME entra al menú
-            currentUIState = UI_MENU_MAIN;
-            currentMenuItem = 0; // Empezar en el primer ítem
-            printSerialDebug("UI: HOME -> MENU_MAIN");
-            displayMenuScreen(); // Actualizar display inmediatamente
-            break;
-        case UI_MENU_MAIN:
-            currentMenuItem += (diff > 0 ? 1 : -1);
-            if (currentMenuItem < 0) currentMenuItem = MAIN_MENU_ITEMS - 1;
-            if (currentMenuItem >= MAIN_MENU_ITEMS) currentMenuItem = 0;
-            displayMenuScreen();
-            break;
-        case UI_MENU_SUB:
-            // Lógica para navegar submenús
-            // currentSubMenuItem += (diff > 0 ? 1 : -1);
-            // ... (manejar límites del submenú)
-            displayMenuScreen();
-            break;
-        case UI_EDIT_VALUE:
-            // Lógica para cambiar el valor que se está editando
-            // Esto es muy dependiente del parámetro específico
-            // Ejemplo para currentConfig.thFrecuenciaMuestreo (min 1, max 60)
-            if (currentMenuItem == 0 && editingParamIndex == 0) { // Temp/Hum -> Frecuencia
-                currentConfig.thFrecuenciaMuestreo += (diff > 0 ? 1 : -1);
-                if (currentConfig.thFrecuenciaMuestreo < 1) currentConfig.thFrecuenciaMuestreo = 1;
-                if (currentConfig.thFrecuenciaMuestreo > 60) currentConfig.thFrecuenciaMuestreo = 60;
-            }
-            // Añadir más casos para otros parámetros (lucesHoraON, etc.)
-            // ...
-            displayEditValueScreen();
-            break;
-        case UI_CONFIRM_ACTION:
-            // Lógica para cambiar entre "Sí" y "No"
-            // Ejemplo: si currentSubMenuItem es 0 para "No", 1 para "Sí"
-            // currentSubMenuItem = (currentSubMenuItem == 0 ? 1 : 0);
-            displayConfirmScreen();
-            break;
-        default:
-            break;
-    }
-}
-
-void handleEncoderClick() {
-    switch (currentUIState) {
-        case UI_HOME:
-            // Clic desde HOME también podría entrar al menú (opcional)
-            currentUIState = UI_MENU_MAIN;
-            currentMenuItem = 0;
-            printSerialDebug("UI: HOME -> MENU_MAIN (por click)");
-            displayMenuScreen();
-            break;
-        case UI_MENU_MAIN:
-            printSerialDebug("UI: Click en MENU_MAIN, item: " + String(mainMenu[currentMenuItem]));
-            // Lógica para entrar a submenú, editar valor o ejecutar acción
-            if (strcmp(mainMenu[currentMenuItem], "7. Salir") == 0) {
-                currentUIState = UI_HOME;
-                displayHomeScreen();
-            } else if (strcmp(mainMenu[currentMenuItem], "1. Temp/Hum") == 0) {
-                // Este ítem tiene sub-parámetros para editar
-                // currentUIState = UI_MENU_SUB; // O directamente a editar el primer param
-                currentUIState = UI_EDIT_VALUE;
-                editingParamIndex = 0; // Empezar editando Frecuencia de TH
-                // Cargar el valor actual para edición (ya está en currentConfig)
-                displayEditValueScreen();
-            } else if (strcmp(mainMenu[currentMenuItem], "6. Sistema") == 0) {
-                currentUIState = UI_MENU_SUB;
-                currentSubMenuItem = 0; // Ir al primer ítem del submenú de Sistema
-                // Aquí necesitarías definir la estructura del submenú de Sistema
-                displayMenuScreen(); // Mostrar el submenú
-            }
-            // ... más casos para otros ítems del menú principal
-            break;
-        case UI_MENU_SUB:
-            // Lógica para click en un ítem de submenú
-            // Puede ser entrar a editar, ejecutar acción, o ir a pantalla de confirmación
-            // Ejemplo: si en Sistema->Olvidar Red
-            // currentUIState = UI_CONFIRM_ACTION;
-            // displayConfirmScreen();
-            break;
-        case UI_EDIT_VALUE:
-            // Guardar el valor editado y volver al menú anterior
-            printSerialDebug("UI: Valor confirmado/guardado.");
-            savePreferences(); // Guardar todas las preferencias (o solo la modificada)
-            // Volver al menú principal o submenú desde donde se entró a editar
-            // Esto necesita una mejor gestión de "de dónde vengo"
-            currentUIState = UI_MENU_MAIN; // Simplificación
-            displayMenuScreen();
-            break;
-        case UI_CONFIRM_ACTION:
-            // Lógica para ejecutar la acción si se confirmó "Sí"
-            // Ejemplo: si se confirmó "Olvidar Red WiFi"
-            // if (currentSubMenuItem == 1 /* "Sí" */) {
-            //    resetWiFiCredentialsAndRestart();
-            // } else {
-            //    currentUIState = UI_MENU_SUB; // Volver al submenú
-            //    displayMenuScreen();
-            // }
-            currentUIState = UI_MENU_SUB; // Simplificación
-            displayMenuScreen();
-            break;
-        default:
-            break;
-    }
-}
-
+// Reinicia el temporizador de inactividad del menú
 void resetMenuTimeout() {
     lastEncoderActivityTime = millis();
 }
 
+// Verifica si el menú debe cerrarse por inactividad
 void checkMenuTimeout() {
-    if (currentUIState != UI_HOME && currentUIState != UI_TEMP_MESSAGE) {
+    if (currentUIState != UI_HOME && currentUIState != UI_TEMP_MESSAGE) { // Si estamos en algún menú o pantalla de edición/info
         if (millis() - lastEncoderActivityTime >= MENU_TIMEOUT_MS) {
             printSerialDebug("Timeout de menu, volviendo a HOME.");
             currentUIState = UI_HOME;
-            displayHomeScreen();
+            forceLcdUpdate = true; // Forzar redibujo de la pantalla HOME
         }
     }
 }
 
+// =============================================================================
+// IMPLEMENTACIÓN DE FUNCIONES DE WIFI, NTP, PREFERENCIAS, FS, WEB SERVER
+// (Mayormente sin cambios significativos respecto a la versión anterior,
+//  se han revisado comentarios y pequeñas lógicas)
+// =============================================================================
 
-// --- Gestión WiFi y NTP ---
 void setupWiFi() {
-    WiFi.mode(WIFI_STA); // Empezar en modo Station
-    wifiManager.setDebugOutput(true); // O false para menos output serial
-    wifiManager.setMinimumSignalQuality(20); // Calidad mínima de señal para mostrar redes
-    // wifiManager.setConfigPortalTimeout(180); // Timeout para el portal en segundos (0 = sin timeout)
+    WiFi.mode(WIFI_STA);
+    wifiManager.setDebugOutput(true);
+    wifiManager.setMinimumSignalQuality(20);
+    String apName = String(AP_SSID_PREFIX); 
     
-    // Nombre del AP para el portal cautivo
-    String apName = String(AP_SSID_PREFIX) + WiFi.macAddress().substring(12);
-    apName.replace(":", ""); // WiFiManager puede quitar los dos puntos
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("Conectando WiFi");
+    printSerialDebug("Intentando conectar a WiFi o iniciar portal de configuracion...");
 
-    // Intentar conectar con credenciales guardadas o iniciar portal
-    // El true final significa que si la conexión falla, iniciará el portal AP
-    // El false significaría que solo intenta conectar y luego tú manejas el AP.
-    // Usaremos autoConnect que es más simple.
-    lcd.clear();
-    lcd.setCursor(0,0);
-    lcd.print("Conectando WiFi");
-    printSerialDebug("Intentando conectar a WiFi o iniciar portal...");
-
-    // Callback para cuando entra en modo configuración
     wifiManager.setAPCallback([](WiFiManager *myWiFiManager) {
-        printSerialDebug("Entrando en modo Portal de Configuracion AP.");
-        String currentApName = myWiFiManager->getConfigPortalSSID();
+        String portalSsid = myWiFiManager->getConfigPortalSSID();
+        String portalIp = WiFi.softAPIP().toString(); // Obtener la IP del AP
+
+        printSerialDebug("Portal AP Activo. SSID: " + portalSsid + ", IP: " + portalIp);
+        
+        // Actualizar el LCD directamente aquí
         lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("Conectar a:");
+        String linea1Display = ""; 
+        int espacioParaSsid = LCD_COLS - linea1Display.length();
+        if (portalSsid.length() > espacioParaSsid) {
+            linea1Display += portalSsid.substring(0, espacioParaSsid);
+        } else {
+            linea1Display += portalSsid;
+        }
+        lcd.print(linea1Display);
+        
         lcd.setCursor(0, 1);
-        lcd.print(currentApName.substring(0,16));
-        // El parpadeo del LED se manejará en blinkLED() basado en wifiManager.getConfigPortalActive()
+        // Formatear Línea 2: "IP: [IP_DEL_AP]"
+        String linea2Display = "" + portalIp;
+        if (linea2Display.length() > LCD_COLS) {
+            linea2Display = linea2Display.substring(0, LCD_COLS);
+        }
+        lcd.print(linea2Display);
+
+        // Ya no es estrictamente necesario forceLcdUpdate = true; aquí
+        // porque hemos actualizado el LCD directamente.
+        // Pero no hace daño dejarlo por si displayHomeScreen() tiene otra lógica que deba ejecutarse.
+        // forceLcdUpdate = true; 
     });
 
-    // Callback para cuando se guardan nuevas credenciales (opcional)
     wifiManager.setSaveConfigCallback([]() {
         printSerialDebug("Nuevas credenciales WiFi guardadas. Reiniciando...");
-        // WiFiManager usualmente reinicia solo, pero podemos forzarlo.
-        // ESP.restart(); // Descomentar si es necesario.
+        delay(1000); 
+        ESP.restart();
     });
-    
-    // Si no se conecta en X segundos, inicia el portal.
-    // El timeout es para el intento de conexión, no para el portal en sí.
-    wifiManager.setConfigPortalTimeout(120); // Espera 2 minutos para conectar antes de abrir portal
+    wifiManager.setConfigPortalTimeout(120); 
 
     if (wifiManager.autoConnect(apName.c_str())) {
-        printSerialDebug("WiFi conectado! SSID: " + WiFi.SSID());
-        printSerialDebug("IP: " + WiFi.localIP().toString());
         wifiConnected = true;
+        printSerialDebug("WiFi Conectado!");
     } else {
-        printSerialDebug("Fallo al conectar WiFi y el portal de configuracion se cerro o tuvo timeout.");
-        printSerialDebug("El dispositivo puede necesitar reinicio o no tendra conectividad.");
+        printSerialDebug("Fallo al conectar WiFi y el portal se cerro o tuvo timeout.");
         wifiConnected = false;
-        // Aquí podrías decidir reiniciar o entrar en un modo offline limitado.
-        // Por ahora, se quedará offline y el LCD lo indicará.
-        // La función displayHomeScreen se encargará de mostrar el estado del AP si WiFiManager lo dejó activo.
+        // Si el portal se activó, el callback ya actualizó el LCD.
+        // Si el portal tuvo timeout ANTES de que el usuario conectara, el LCD mostrará lo del callback.
     }
-    displayHomeScreen(); // Actualizar LCD con el estado final
+    forceLcdUpdate = true; // Para que el loop principal actualice con el estado final (Online/Offline)
+                           // Si el portal sigue activo (sin timeout), displayHomeScreen() volverá a mostrar la info del AP.
 }
 
-
 void updateNTP() {
-    if (wifiConnected && timeClient.isTimeSet()) { // Solo actualizar si ya tenemos una hora válida
-      if (timeClient.update()) {
-        // printSerialDebug("NTP actualizado: " + timeClient.getFormattedTime());
-      } else {
-        // printSerialDebug("Fallo al actualizar NTP.");
-      }
-    } else if (wifiConnected && !timeClient.isTimeSet()) { // Si conectado pero sin hora, intentar obtenerla
-        if (timeClient.forceUpdate()) { // Forzar primer update
-            printSerialDebug("NTP obtenido por primera vez: " + timeClient.getFormattedTime());
-            displayHomeScreen(); // Actualizar LCD con la hora
-        } else {
-            printSerialDebug("Fallo al obtener NTP inicial.");
+    if (wifiConnected) {
+        if (timeClient.isTimeSet()) { // Si ya tenemos la hora, solo actualizar
+            timeClient.update();
+        } else { // Si no tenemos la hora, forzar la primera obtención
+            if (timeClient.forceUpdate()) {
+                printSerialDebug("NTP obtenido por primera vez: " + timeClient.getFormattedTime());
+                forceLcdUpdate = true; // Para mostrar la hora en el LCD
+            } else {
+                printSerialDebug("Fallo al obtener NTP inicial.");
+            }
         }
     }
 }
@@ -1002,37 +1227,29 @@ String getFormattedTime(bool withSeconds) {
     if (!wifiConnected || !timeClient.isTimeSet()) {
         return withSeconds ? "--:--:--" : "--:--";
     }
-    String timeStr = timeClient.getFormattedTime(); // HH:MM:SS
+    String timeStr = timeClient.getFormattedTime(); // Formato HH:MM:SS
     if (withSeconds) {
         return timeStr;
     } else {
-        return timeStr.substring(0, 5); // HH:MM
+        return timeStr.substring(0, 5); // Formato HH:MM
     }
 }
 
 String getFormattedDateTime() {
     if (!wifiConnected || !timeClient.isTimeSet()) {
-        return "---- -- --:--:--"; // Placeholder si no hay hora
+        return "---- -- --:--:--"; // Placeholder
     }
     time_t epochTime = timeClient.getEpochTime();
-    struct tm *ptm = gmtime(&epochTime); // O localtime() si quieres hora local con zona horaria configurada
-                                         // pero NTPClient ya suele dar la hora con offset.
-                                         // Para gmtime, necesitarías añadir el offset manualmente si es UTC 0.
-                                         // Como usamos pool.ntp.org y offset 0, esto es UTC.
-                                         // Para hora local Argentina (-3), el offset en NTPClient debería ser -3*3600.
-                                         // O usar funciones de manejo de zona horaria de C++.
-
-    // Formato AAAA-MM-DD-HH-MM-SS
+    struct tm *ptm = gmtime(&epochTime); // Convierte epoch a estructura tm (UTC)
+    
     char buffer[20];
-    // strftime(buffer, sizeof(buffer), "%Y-%m-%d-%H-%M-%S", localtime(&epochTime)); // Para hora local con TZ del sistema
-    // Para UTC directo de timeClient con offset 0:
+    // El offset UTC-3 ya se aplicó en la configuración de NTPClient
     int year = ptm->tm_year + 1900;
     int month = ptm->tm_mon + 1;
     int day = ptm->tm_mday;
-    // Los H,M,S ya los da bien timeClient.getFormattedTime()
-    String formattedTime = timeClient.getFormattedTime(); // HH:MM:SS
-    
-    sprintf(buffer, "%04d-%02d-%02d-%s", year, month, day, formattedTime.c_str());
+    // Usar las horas, minutos y segundos directamente de timeClient que ya tiene el offset
+    sprintf(buffer, "%04d-%02d-%02d-%02d-%02d-%02d", year, month, day, 
+            timeClient.getHours(), timeClient.getMinutes(), timeClient.getSeconds());
     return String(buffer);
 }
 
@@ -1040,47 +1257,31 @@ String getLocalIP() {
     if (wifiConnected) {
         return WiFi.localIP().toString();
     } else if (wifiManager.getConfigPortalActive()) {
-        return WiFi.softAPIP().toString(); // IP del portal
+        return WiFi.softAPIP().toString(); // IP del portal de configuración
     }
     return "N/A";
 }
 
-// --- Gestión de Preferencias ---
 void loadDefaultPreferences() {
     printSerialDebug("Cargando preferencias por defecto.");
-    currentConfig.thFrecuenciaMuestreo = 60;
-    currentConfig.thModoTest = false;
-    currentConfig.lucesHoraON = 6;
-    currentConfig.lucesHoraOFF = 0;
-    currentConfig.lucesModoTest = false;
-    currentConfig.ventHoraON = 6;
-    currentConfig.ventHoraOFF = 0;
-    currentConfig.ventModoTest = false;
-    currentConfig.extrFrecuenciaHoras = 0;
-    currentConfig.extrDuracionMinutos = 1;
-    currentConfig.extrModoTest = false;
-    currentConfig.riegoFrecuenciaDias = 0;
-    currentConfig.riegoDuracionMinutos = 1;
-    currentConfig.riegoHoraDisparo = 21;
-    currentConfig.riegoModoTest = false;
-    currentConfig.registroFrecuenciaHoras = 1;
-    currentConfig.registroTamMax = 4380;
-    currentConfig.registroModoTest = false;
-    // Guardar los defaults para que existan en la próxima carga
-    savePreferences();
+    // Asignar todos los valores por defecto a la estructura currentConfig
+    currentConfig = {
+        60, false, // thFrecuenciaMuestreo, thModoTest
+        6, 0, false, // lucesHoraON, lucesHoraOFF, lucesModoTest
+        6, 0, false, // ventHoraON, ventHoraOFF, ventModoTest
+        0, 1, false, // extrFrecuenciaHoras, extrDuracionMinutos, extrModoTest
+        0, 1, 21, false, // riegoFrecuenciaDias, riegoDuracionMinutos, riegoHoraDisparo, riegoModoTest
+        1, 4380, false // registroFrecuenciaHoras, registroTamMax, registroModoTest
+    };
+    savePreferences(); // Guardar estos defaults en NVS para la próxima vez
 }
 
 void loadPreferences() {
-    // preferences.begin(PREFERENCES_NAMESPACE, false) ya se llamó en setup
-    // Si una clave no existe, getInt/getBool devuelve el segundo argumento (default)
     printSerialDebug("Cargando preferencias...");
-    bool defaultsLoaded = false;
-    if (!preferences.isKey(KEY_TH_FREQ)) { // Si una clave principal no existe, asumimos que son defaults
+    // preferences.begin() ya se llamó en setup()
+    if (!preferences.isKey(KEY_TH_FREQ)) { // Si una clave principal no existe, cargar defaults
         loadDefaultPreferences();
-        defaultsLoaded = true;
-    }
-
-    if (!defaultsLoaded) { // Solo cargar si no se usaron defaults recién
+    } else { // Cargar todas las configuraciones desde NVS
         currentConfig.thFrecuenciaMuestreo = preferences.getInt(KEY_TH_FREQ, 60);
         currentConfig.thModoTest = preferences.getBool(KEY_TH_TEST, false);
         currentConfig.lucesHoraON = preferences.getInt(KEY_LUCES_ON, 6);
@@ -1103,8 +1304,8 @@ void loadPreferences() {
     }
 }
 
-void savePreferences() {
-    printSerialDebug("Guardando preferencias...");
+void savePreferences() { // Guarda toda la estructura currentConfig en NVS
+    printSerialDebug("Guardando todas las preferencias...");
     preferences.putInt(KEY_TH_FREQ, currentConfig.thFrecuenciaMuestreo);
     preferences.putBool(KEY_TH_TEST, currentConfig.thModoTest);
     preferences.putInt(KEY_LUCES_ON, currentConfig.lucesHoraON);
@@ -1123,63 +1324,60 @@ void savePreferences() {
     preferences.putInt(KEY_REG_FREQ, currentConfig.registroFrecuenciaHoras);
     preferences.putInt(KEY_REG_MAX, currentConfig.registroTamMax);
     preferences.putBool(KEY_REG_TEST, currentConfig.registroModoTest);
-    printSerialDebug("Preferencias guardadas en NVS.");
+    printSerialDebug("Todas las preferencias guardadas en NVS.");
 }
 
 void resetWiFiCredentialsAndRestart() {
     printSerialDebug("Borrando credenciales WiFi y reiniciando...");
-    wifiManager.resetSettings(); // Borra las credenciales guardadas
+    wifiManager.resetSettings(); // Borra las credenciales WiFi guardadas
     delay(1000);
     ESP.restart();
 }
 
-
-// --- Gestión de Archivos (Log y Web) ---
 void initLittleFS() {
-    if (!LittleFS.begin(true)) { // true formatea si no se puede montar
-        printSerialDebug("Error al montar LittleFS. Se formateara.");
+    if (!LittleFS.begin(true)) { // true = formatea si no se puede montar
+        printSerialDebug("Error al montar LittleFS. Se intentara formatear.");
         if (!LittleFS.begin(true)) { // Intentar de nuevo formateando
-             printSerialDebug("Fallo critico al montar/formatear LittleFS.");
-             // Aquí podrías entrar en un bucle infinito o reiniciar
+             printSerialDebug("FALLO CRITICO: No se pudo montar/formatear LittleFS.");
              return;
         }
     }
     printSerialDebug("LittleFS montado correctamente.");
-    // Listar archivos (opcional, para debug)
+    // Opcional: Listar archivos para depuración
     File root = LittleFS.open("/");
     File file = root.openNextFile();
     while(file){
-        printSerialDebug("FS File: " + String(file.name()) + " Size: " + String(file.size()));
+        printSerialDebug("  FS File: " + String(file.name()) + " Size: " + String(file.size()));
         file = root.openNextFile();
     }
-    root.close();
-    file.close();
+    root.close(); // Cerrar el directorio raíz
+    // file.close(); // No es necesario aquí, file ya estaría cerrado o sería inválido si no hay más
 }
 
 void logData() {
     if (!timeClient.isTimeSet()) {
-        printSerialDebug("No se puede registrar: hora no sincronizada.");
+        printSerialDebug("Registro de datos omitido: hora no sincronizada.");
         return;
     }
-    rotateLogIfNeeded(); // Asegurar que haya espacio antes de escribir
+    rotateLogIfNeeded(); // Asegurar que haya espacio antes de escribir, rotando si es necesario
 
     File logFile = LittleFS.open(LOG_FILE, FILE_APPEND);
     if (!logFile) {
-        printSerialDebug("Error al abrir archivo de log para append.");
+        printSerialDebug("Error al abrir archivo de log para escritura (append).");
         return;
     }
 
     String dateTime = getFormattedDateTime();
     String logEntry = dateTime + "," +
-                      String(currentTemperature) + "," +
-                      String(currentHumidity) + "," +
-                      (relayStates[0] ? "ON" : "OFF") + "," + // Luces
-                      (relayStates[1] ? "ON" : "OFF") + "," + // Ventilación
-                      (relayStates[2] ? "ON" : "OFF") + "," + // Extracción
-                      (relayStates[3] ? "ON" : "OFF");       // Riego
+                      String(currentTemperature,1) + "," + // Temperatura con 1 decimal
+                      String(currentHumidity,1) + "," +  // Humedad con 1 decimal
+                      (relayStates[0] ? "ON" : "OFF") + "," + // Estado Luces
+                      (relayStates[1] ? "ON" : "OFF") + "," + // Estado Ventilación
+                      (relayStates[2] ? "ON" : "OFF") + "," + // Estado Extracción
+                      (relayStates[3] ? "ON" : "OFF");       // Estado Riego
 
     if (logFile.println(logEntry)) {
-        printSerialDebug("Datos registrados: " + logEntry);
+        printSerialDebug("Datos registrados en log: " + logEntry);
     } else {
         printSerialDebug("Error al escribir en el archivo de log.");
     }
@@ -1189,11 +1387,12 @@ void logData() {
 int getLogEntryCount() {
     File logFile = LittleFS.open(LOG_FILE, FILE_READ);
     if (!logFile) {
+        printSerialDebug("Archivo de log no encontrado para contar entradas.");
         return 0;
     }
     int count = 0;
     while (logFile.available()) {
-        logFile.readStringUntil('\n');
+        logFile.readStringUntil('\n'); // Leer una línea
         count++;
     }
     logFile.close();
@@ -1203,41 +1402,41 @@ int getLogEntryCount() {
 void rotateLogIfNeeded() {
     int currentEntries = getLogEntryCount();
     if (currentEntries < currentConfig.registroTamMax) {
-        return; // No se necesita rotar
+        return; // No se necesita rotar, hay espacio
     }
-    printSerialDebug("Rotando log. Entradas actuales: " + String(currentEntries) + ", Max: " + String(currentConfig.registroTamMax));
+    printSerialDebug("Rotando log. Entradas actuales: " + String(currentEntries) + ", Max permitido: " + String(currentConfig.registroTamMax));
 
     File oldLog = LittleFS.open(LOG_FILE, FILE_READ);
     if (!oldLog) {
-        printSerialDebug("Error al abrir log para rotar (lectura).");
+        printSerialDebug("Error al abrir archivo de log para rotar (lectura).");
         return;
     }
 
-    String tempLogFileName = String(LOG_FILE) + ".tmp";
+    String tempLogFileName = String(LOG_FILE) + ".tmp"; // Nombre para archivo temporal
     File tempLog = LittleFS.open(tempLogFileName.c_str(), FILE_WRITE);
     if (!tempLog) {
-        printSerialDebug("Error al crear archivo de log temporal.");
+        printSerialDebug("Error al crear archivo de log temporal para rotacion.");
         oldLog.close();
         return;
     }
 
-    // Omitir la primera línea (la más antigua)
+    // Omitir la primera línea (la más antigua) del archivo original
     if (oldLog.available()) {
         oldLog.readStringUntil('\n'); 
     }
 
-    // Copiar el resto de las líneas al archivo temporal
+    // Copiar el resto de las líneas del archivo original al archivo temporal
     while (oldLog.available()) {
         tempLog.println(oldLog.readStringUntil('\n'));
     }
-    oldLog.close();
-    tempLog.close();
+    oldLog.close(); // Cerrar archivo original
+    tempLog.close(); // Cerrar archivo temporal (asegura que se escriba todo)
 
     // Reemplazar el log antiguo con el temporal
-    if (!LittleFS.remove(LOG_FILE)) {
-        printSerialDebug("Error al borrar el archivo de log original.");
+    if (!LittleFS.remove(LOG_FILE)) { // Borrar el archivo de log original
+        printSerialDebug("Error al borrar el archivo de log original durante la rotacion.");
     } else {
-        if (!LittleFS.rename(tempLogFileName.c_str(), LOG_FILE)) {
+        if (!LittleFS.rename(tempLogFileName.c_str(), LOG_FILE)) { // Renombrar el temporal al nombre original
             printSerialDebug("Error al renombrar el archivo de log temporal.");
         } else {
             printSerialDebug("Log rotado exitosamente.");
@@ -1245,38 +1444,64 @@ void rotateLogIfNeeded() {
     }
 }
 
-void serveFile(String path, String contentType) {
-    if (LittleFS.exists(path)) {
-        File file = LittleFS.open(path, "r");
-        server.streamFile(file, contentType);
-        file.close();
-        printSerialDebug("Sirviendo archivo: " + path);
-    } else {
+// Sirve un archivo desde LittleFS al cliente web
+// path: ruta del archivo en LittleFS (ej. "/index.html")
+// download: si es true, añade cabecera para forzar la descarga con el nombre del archivo
+void serveFile(String path, String contentType, bool download) {
+    if (LittleFS.exists(path)) { // Verificar si el archivo existe
+        File file = LittleFS.open(path, "r"); // Abrir el archivo en modo lectura
+        if (!file) { // Si no se pudo abrir el archivo (aunque exista, podría ser un error)
+            printSerialDebug("Error al abrir archivo (aunque existe): " + path);
+            handleNotFound(); // Manejar como si no se encontrara
+            return;
+        }
+
+        String fileName = path; // Por defecto, usar la ruta completa como nombre de archivo
+        if (path.lastIndexOf('/') >= 0) { // Extraer solo el nombre de archivo de la ruta
+            fileName = path.substring(path.lastIndexOf('/') + 1);
+        }
+
+        if (download) { // Si se debe forzar la descarga
+             // Enviar cabecera Content-Disposition para sugerir al navegador que descargue el archivo
+             // y con qué nombre de archivo hacerlo.
+             server.sendHeader("Content-Disposition", "attachment; filename=\"" + fileName + "\"");
+        }
+
+        server.streamFile(file, contentType); // Enviar el contenido del archivo al cliente
+        file.close(); // Cerrar el archivo
+
+        // Construir el mensaje de depuración usando String para concatenación segura
+        String debugMsg = "Sirviendo archivo";
+        debugMsg += (download ? " para descarga: " : ": ");
+        debugMsg += path;
+        debugMsg += " como ";
+        debugMsg += fileName;
+        printSerialDebug(debugMsg);
+
+    } else { // Si el archivo no existe en la ruta especificada
         printSerialDebug("Archivo no encontrado para servir: " + path);
-        handleNotFound();
+        handleNotFound(); // Manejar error 404 (Página No Encontrada)
     }
 }
 
-// --- Servidor Web ---
+// --- Configuración de Rutas del Servidor Web ---
 void setupWebServer() {
-    server.on("/", HTTP_GET, handleRoot);
-    server.on("/data", HTTP_GET, handleData);
-    server.on("/control", HTTP_GET, handleControl); // Podría ser POST también
-    server.on("/riego_manual", HTTP_GET, handleRiegoManual);
-    server.on("/descargarLogCsv", HTTP_GET, handleDownloadLog);
-    server.on("/ultimasEntradasLog", HTTP_GET, handleLastLogEntries);
-    // server.on("/wifisave", HTTP_POST, handleWiFiSaveAndRestart); // Para portal cautivo manual
-    server.onNotFound(handleNotFound);
-    // No iniciar server.begin() aquí, se hace en setup() después de conectar WiFi
+    server.on("/", HTTP_GET, handleRoot);                     // Página principal
+    server.on("/data", HTTP_GET, handleData);                 // Endpoint para obtener datos JSON
+    server.on("/control", HTTP_GET, handleControl);           // Endpoint para controlar relés
+    server.on("/riego_manual", HTTP_GET, handleRiegoManual);   // Endpoint para activar riego manual
+    server.on("/descargarLogCsv", HTTP_GET, handleDownloadLog); // Endpoint para descargar el log CSV
+    server.on("/ultimasEntradasLog", HTTP_GET, handleLastLogEntries); // Endpoint para obtener últimas N entradas del log
+    server.onNotFound(handleNotFound);                        // Manejador para rutas no encontradas (404)
+    // server.begin(); // Se llama en setup() después de que WiFi conecte
 }
 
-void handleRoot() {
-    serveFile(WEB_MONITOR_HTML_FILE, "text/html");
+// --- Manejadores de Rutas del Servidor Web ---
+void handleRoot() { // Sirve el archivo HTML principal
+    serveFile(WEB_MONITOR_HTML_FILE, "text/html", false); // false = no forzar descarga
 }
 
-void handleData() {
-    // Crear JSON con datos actuales
-    // Ejemplo: {"temperatura": 23.5, "humedad": 58.2, "luces": "ON", ...}
+void handleData() { // Envía datos actuales de sensores y relés como JSON
     String json = "{";
     json += "\"temperatura\":" + String(currentTemperature, 1) + ",";
     json += "\"humedad\":" + String(currentHumidity, 1) + ",";
@@ -1284,120 +1509,113 @@ void handleData() {
     json += "\"ventilacion\":\"" + String(relayStates[1] ? "ON" : "OFF") + "\",";
     json += "\"extraccion\":\"" + String(relayStates[2] ? "ON" : "OFF") + "\",";
     json += "\"riego\":\"" + String(relayStates[3] ? "ON" : "OFF") + "\"";
-    // Podrías añadir más datos como hora, IP, SSID, etc.
     json += "}";
     server.send(200, "application/json", json);
-    printSerialDebug("Sirviendo /data: " + json);
+    // printSerialDebug("Sirviendo /data: " + json.substring(0, 50) + "..."); // Truncar para no llenar el log serial
 }
 
-void handleControl() {
+void handleControl() { // Maneja comandos para controlar relés
     String componente = server.arg("componente");
     String accion = server.arg("accion"); // "on", "off", o "toggle"
 
     printSerialDebug("Recibido comando /control: componente=" + componente + ", accion=" + accion);
-
     int relayIndex = -1;
-    if (componente == "luces") relayIndex = 0;
-    else if (componente == "ventilacion") relayIndex = 1;
-    else if (componente == "extraccion") relayIndex = 2;
-    else if (componente == "riego") relayIndex = 3;
+    bool* testModeFlag = nullptr; // Puntero para poder desactivar el modo test del componente específico
 
+    if (componente == "luces") { relayIndex = 0; testModeFlag = &currentConfig.lucesModoTest; }
+    else if (componente == "ventilacion") { relayIndex = 1; testModeFlag = &currentConfig.ventModoTest; }
+    else if (componente == "extraccion") { relayIndex = 2; testModeFlag = &currentConfig.extrModoTest; }
+    else if (componente == "riego") { relayIndex = 3; testModeFlag = &currentConfig.riegoModoTest; }
+    
     if (relayIndex != -1) {
         bool newState;
         if (accion == "on") newState = true;
         else if (accion == "off") newState = false;
-        else if (accion == "toggle") newState = !relayStates[relayIndex];
+        else if (accion == "toggle") newState = !relayStates[relayIndex]; // Cambiar al estado opuesto
         else {
             server.send(400, "text/plain", "Accion invalida");
             return;
         }
-        // Al controlar desde la web, desactivar el modo test de ese relé si estaba activo
-        if (relayIndex == 0) currentConfig.lucesModoTest = false;
-        else if (relayIndex == 1) currentConfig.ventModoTest = false;
-        else if (relayIndex == 2) currentConfig.extrModoTest = false;
-        else if (relayIndex == 3) currentConfig.riegoModoTest = false;
-        savePreferences(); // Guardar el cambio de modo test
-
-        controlRelay(relayIndex, newState, true); // true para manualOverride
+        // Si el componente estaba en modo test y se controla desde la web, desactivar el modo test
+        if (testModeFlag && *testModeFlag) {
+            *testModeFlag = false; // Desactivar modo test en la configuración
+            savePreferences();     // Guardar el cambio en Preferences
+            printSerialDebug("Modo Test desactivado para " + componente + " via web.");
+        }
+        controlRelay(relayIndex, newState, true); // true para manualOverride, actualiza estado y relé
         server.send(200, "text/plain", "OK, " + componente + " " + (newState ? "ON" : "OFF"));
     } else {
         server.send(400, "text/plain", "Componente invalido");
     }
 }
 
-void handleRiegoManual() {
+void handleRiegoManual() { // Maneja la activación manual del riego
     printSerialDebug("Recibido comando /riego_manual");
-    // Lógica para activar el riego manualmente por X tiempo
-    // Similar a como se activa desde el menú o por horario, pero es un ciclo único.
-    // Podrías usar la duración configurada para el riego o una fija.
     if (!riegoActive) { // Solo si no está ya regando
-        currentConfig.riegoModoTest = false; // Desactivar modo test si se activa manual
-        savePreferences();
-
-        controlRelay(3, true, true); // Encender riego
-        riegoActive = true;
-        riegoStartTime = millis(); // Usará la duración de currentConfig.riegoDuracionMinutos
+        // Si el modo test de riego estaba activo, desactivarlo
+        if (currentConfig.riegoModoTest) {
+            currentConfig.riegoModoTest = false;
+            savePreferences();
+            printSerialDebug("Modo Test Riego desactivado via web (activacion manual).");
+        }
+        controlRelay(3, true, true); // Encender relé de riego (manualOverride = true)
+        riegoActive = true; // Marcar que el ciclo de riego manual está activo
+        riegoStartTime = millis(); // Registrar inicio para controlar duración (usará currentConfig.riegoDuracionMinutos)
         printSerialDebug("Riego manual iniciado.");
         server.send(200, "text/plain", "OK, Riego manual iniciado");
     } else {
-        server.send(200, "text/plain", "Riego ya activo");
+        server.send(200, "text/plain", "Riego ya se encuentra activo");
     }
 }
 
-void handleDownloadLog() {
-    serveFile(LOG_FILE, "text/csv");
+void handleDownloadLog() { // Permite descargar el archivo de log CSV completo
+    serveFile(LOG_FILE, "text/csv", true); // true para forzar descarga con nombre de archivo
 }
 
-void handleLastLogEntries() {
-    int linesToShow = 15; // Por defecto
-    if (server.hasArg("lineas")) {
+void handleLastLogEntries() { // Envía las últimas N líneas del archivo de log
+    int linesToShow = 15; // Número de líneas por defecto a mostrar
+    if (server.hasArg("lineas")) { // Si el cliente especifica cuántas líneas
         linesToShow = server.arg("lineas").toInt();
-        if (linesToShow <= 0 || linesToShow > 100) linesToShow = 15; // Limitar
+        if (linesToShow <= 0 || linesToShow > 100) linesToShow = 15; // Limitar para evitar uso excesivo de memoria
     }
 
     File logFile = LittleFS.open(LOG_FILE, FILE_READ);
     if (!logFile) {
-        server.send(500, "text/plain", "Error al abrir log");
+        server.send(500, "text/plain", "Error al abrir archivo de log");
         return;
     }
+    
+    // Leer las últimas N líneas (forma eficiente para archivos potencialmente grandes)
+    // Esto es una simplificación: lee todo y luego extrae. Para archivos muy grandes, sería mejor leer desde el final.
+    String lineBuffer[linesToShow]; // Buffer para almacenar las líneas
+    int currentLineCount = 0;       // Contador de líneas leídas
+    int bufferIndex = 0;            // Índice para el buffer circular
 
-    // Contar líneas totales para saber dónde empezar a leer si son muchas
-    // O leer todo y tomar las últimas N (más simple para pocas líneas, ineficiente para logs grandes)
-    // Para este ejemplo, leemos todo y tomamos las últimas N.
-    String logContent = "";
-    int lineCount = 0;
-    String lines[linesToShow]; // Array para guardar las últimas N líneas
-    int currentLineIndex = 0;
-
-    while (logFile.available()) {
+    while (logFile.available()){
         String line = logFile.readStringUntil('\n');
-        lines[currentLineIndex % linesToShow] = line;
-        currentLineIndex++;
-        lineCount++;
+        lineBuffer[bufferIndex % linesToShow] = line; // Almacenar en buffer circular
+        bufferIndex++;
+        currentLineCount++;
     }
     logFile.close();
 
     String output = "";
-    // Reconstruir en el orden correcto
-    int startIdx = (lineCount < linesToShow) ? 0 : (currentLineIndex % linesToShow);
-    for (int i = 0; i < min(linesToShow, lineCount); ++i) {
-        output += lines[startIdx] + "\n";
-        startIdx = (startIdx + 1) % linesToShow;
+    // Reconstruir las últimas N líneas en el orden correcto desde el buffer circular
+    int startReadingIndex = (currentLineCount < linesToShow) ? 0 : (bufferIndex % linesToShow);
+    for (int i = 0; i < min(linesToShow, currentLineCount); ++i) {
+        output += lineBuffer[startReadingIndex] + "\n";
+        startReadingIndex = (startReadingIndex + 1) % linesToShow;
     }
     
-    server.send(200, "text/plain", output);
-    printSerialDebug("Sirviendo ultimas " + String(linesToShow) + " lineas del log.");
+    server.send(200, "text/plain", output); // Enviar las líneas como texto plano
+    printSerialDebug("Sirviendo ultimas " + String(min(linesToShow, currentLineCount)) + " lineas del log.");
 }
 
-
-void handleNotFound() {
-    String message = "File Not Found\n\n";
-    message += "URI: ";
-    message += server.uri();
-    message += "\nMethod: ";
-    message += (server.method() == HTTP_GET) ? "GET" : "POST";
-    message += "\nArguments: ";
-    message += server.args();
+void handleNotFound() { // Manejador para error 404 (Página No Encontrada)
+    String message = "404 - Pagina No Encontrada\n\n";
+    message += "URI: "; message += server.uri();
+    message += "\nMetodo: "; message += (server.method() == HTTP_GET) ? "GET" : "POST";
+    message += "\nArgumentos: "; message += server.args();
     message += "\n";
     for (uint8_t i = 0; i < server.args(); i++) {
         message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
@@ -1407,76 +1625,43 @@ void handleNotFound() {
 }
 
 // --- Utilidades ---
+// Imprime mensajes de depuración al Monitor Serie con timestamp
+void printSerialDebug(String message) {
+    Serial.println("[" + String(millis() / 1000.0, 2) + "s] " + message);
+}
+
+// Controla el parpadeo del LED integrado según el modo de operación
 void blinkLED() {
     unsigned long currentTime = millis();
     
     if (wifiManager.getConfigPortalActive()) { // Modo Configuración (Portal AP activo)
+        // Parpadeo lento: 1 segundo ON, 1 segundo OFF
         if (currentTime - lastLEDToggleTime >= ledBlinkIntervalConfig) {
             ledBlinkState = !ledBlinkState;
             digitalWrite(LED_BUILTIN_PIN, ledBlinkState);
             lastLEDToggleTime = currentTime;
         }
     } else if (wifiConnected) { // Modo Normal (Conectado a WiFi)
-        if (ledBlinkCount < NORMAL_MODE_BLINK_COUNT * 2) { // *2 porque es ON y OFF
+        // Doble parpadeo rápido cada 3 segundos
+        if (ledBlinkCount < NORMAL_MODE_BLINK_COUNT * 2) { // *2 porque es ON y OFF para cada parpadeo
             if (currentTime - lastLEDToggleTime >= ledBlinkIntervalNormal) {
                 ledBlinkState = !ledBlinkState;
                 digitalWrite(LED_BUILTIN_PIN, ledBlinkState);
                 lastLEDToggleTime = currentTime;
                 ledBlinkCount++;
             }
-        } else { // Pausa larga
+        } else { // Pausa larga para completar el ciclo de 3 segundos
             if (currentTime - lastLEDToggleTime >= ledBlinkPauseNormal) {
                 ledBlinkCount = 0; // Reiniciar ciclo de parpadeo
-                lastLEDToggleTime = currentTime; // Para que el primer blink del nuevo ciclo sea inmediato
+                lastLEDToggleTime = currentTime; // Para que el primer blink del nuevo ciclo sea más preciso
             }
         }
     } else { // Offline o intentando conectar (sin portal activo)
-        // Podrías tener otro patrón de parpadeo, por ahora lo dejamos apagado o parpadeo lento
-         if (currentTime - lastLEDToggleTime >= 2000) { // Parpadeo muy lento
+        // Parpadeo muy lento (ej. 0.25 Hz: 2s ON, 2s OFF)
+         if (currentTime - lastLEDToggleTime >= 2000) { 
             ledBlinkState = !ledBlinkState;
             digitalWrite(LED_BUILTIN_PIN, ledBlinkState);
             lastLEDToggleTime = currentTime;
         }
     }
 }
-
-void printSerialDebug(String message) {
-    Serial.println("[" + String(millis() / 1000.0, 3) + "s] " + message);
-}
-
-// Función de utilidad para subir archivos a LittleFS durante el desarrollo.
-// No llamar en producción normalmente.
-void uploadFileToLittleFS(String localPath, String fsPath) {
-    // Esta función es conceptual. Necesitarías una forma de obtener el contenido
-    // del localPath (ej. desde una tarjeta SD, o hardcodeado como un string grande,
-    // o a través de una carga HTTP desde una herramienta).
-    // Por simplicidad, aquí asumimos que tienes el contenido en una variable.
-    // Ejemplo: String fileContent = "<!DOCTYPE html><html>...</html>";
-    
-    // Para el caso real, el archivo armina-grow-monitor.html debe ser subido
-    // usando el plugin "ESP32 Sketch Data Upload" del Arduino IDE,
-    // o alguna otra herramienta de subida a LittleFS.
-    
-    // Este es solo un placeholder si quisieras crear un archivo de ejemplo.
-    if (!LittleFS.exists(fsPath)) {
-        printSerialDebug("Archivo " + fsPath + " no existe. Creando ejemplo...");
-        File file = LittleFS.open(fsPath, FILE_WRITE);
-        if (file) {
-            file.println("<!DOCTYPE html><html><head><title>Armina Grow Monitor</title></head>");
-            file.println("<body><h1>Armina Grow</h1><p>Contenido de prueba. Sube el archivo real.</p>");
-            file.println("<p>Temperatura: <span id='temperatura'>--</span></p>");
-            file.println("<p>Humedad: <span id='humedad'>--</span></p>");
-            file.println("<script>");
-            file.println("function fetchData() { fetch('/data').then(r=>r.json()).then(d => { document.getElementById('temperatura').innerText = d.temperatura; document.getElementById('humedad').innerText = d.humedad; }); }");
-            file.println("setInterval(fetchData, 5000); fetchData();");
-            file.println("</script></body></html>");
-            file.close();
-            printSerialDebug("Archivo de ejemplo " + fsPath + " creado.");
-        } else {
-            printSerialDebug("Error al crear archivo de ejemplo " + fsPath);
-        }
-    } else {
-        printSerialDebug("Archivo " + fsPath + " ya existe.");
-    }
-}
-
