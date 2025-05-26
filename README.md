@@ -1,5 +1,7 @@
 # Armina Grow
-Implementacion en ESP32 para control de cultivo indoor. Este es un ejercicio de programación del firmware de un ESP32 utilizando Gemini IA modelo 2.5 Pro (preview). Mis conocimientos de programación son escasos: algo de Python, algo de HTMLy CSS, estructuras básicas. Pretendo darle toda esta info a Gemini a ver si sale andando. Aprendiendo a usar git. Por ahora viendo que pasa
+Implementacion en ESP32 para control de cultivo indoor.
+
+Este es un ejercicio de programación del firmware de un ESP32 utilizando Gemini IA modelo 2.5 Pro (preview). Mis conocimientos de programación son escasos: algo de Python, algo de HTMLy CSS, estructuras básicas. Pretendo darle toda esta info a Gemini a ver si sale andando. Aprendiendo a usar git. Por ahora viendo que pasa
 
 Hardware utilizado:
 - [Display LCD1602](https://protosupplies.com/product/lcd1602-16x2-i2c-blue-lcd-display/)
@@ -15,9 +17,23 @@ Info:
 ## Disclaimer
 Este codigo es experimental y de estudio. Libre para copiar y usar.
 
-## Prompt
+## Status de desarrollo
+* Conexiones: OK
+* Estructura de menu: OK 
+* Funciones de menu: a verificar
+* Navegacion: es necesario mejorar el funcionamiento del encoder
+* Registro: OK
+* Webserver:
+	- Lectura sensores OK
+	- Lectura de relays: ?
+	- Botones de relays: ?
+* Comportamiento segun preferencias guardadas: a verificar
 
-Vas a programar un prototipo IoT con una placa ESP32 NodeMCU en Arduino IDE. El dispositivo se denomina Armina Grow y sirve para automatizar el cultivo indoor. Tiene un sensor de temperatura y humedad, permite controlar luces, ventilación, extracción y riego. La interface de usuario consta de un display LCD y un encoder rotativo que permite programar la operación del dispositivo. Cuenta con registro de datos y un servidor web para monitoreo. Me vas a dar el codigo que responda a las caracteristicas y funciones que siguen. Vas a esperar a que te diga Adelante para responder con el codigo.
+Proximo: mejorar el funcionamiento del encoder
+
+## Descripcion
+
+El dispositivo se denomina Armina Grow y sirve para automatizar el cultivo indoor. Tiene un sensor de temperatura y humedad, permite controlar luces, ventilación, extracción y riego. La interface de usuario consta de un display LCD y un encoder rotativo que permite programar la operación del dispositivo. Cuenta con registro de datos y un servidor web para monitoreo. Me vas a dar el codigo que responda a las caracteristicas y funciones que siguen. Vas a esperar a que te diga Adelante para responder con el codigo.
 
 
 ### Modulos conectados:
